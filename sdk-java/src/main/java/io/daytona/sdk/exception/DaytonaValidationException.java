@@ -6,32 +6,43 @@ package io.daytona.sdk.exception;
 /**
  * Raised for semantic validation failures (HTTP 422).
  *
- * <p>Raised when the request is well-formed but the values fail business logic
- * validation (e.g., unsupported resource class, invalid configuration).
+ * <p>The mapper throws this subclass for 422 responses so that pre-existing
+ * {@code catch (DaytonaValidationException e)} blocks keep matching, while
+ * {@code catch (DaytonaUnprocessableEntityException e)} also matches via the
+ * parent class.
  *
- * <pre>{@code
- * try {
- *     daytona.sandbox().create(params);
- * } catch (DaytonaValidationException e) {
- *     System.err.println("Validation failed: " + e.getMessage());
- * }
- * }</pre>
+ * <p>Exists for backward compatibility only. Deleting this class (and
+ * switching the 422 case in {@code ExceptionMapper} back to the parent) is
+ * the whole removal.
+ *
+ * @deprecated Use {@link DaytonaUnprocessableEntityException} instead.
  */
-public class DaytonaValidationException extends DaytonaException {
+@Deprecated
+public class DaytonaValidationException extends DaytonaUnprocessableEntityException {
     /**
      * Creates a validation exception.
      *
-     * @param message error description from the API
+     * @param message error description
      */
     public DaytonaValidationException(String message) {
-        super(422, message);
+        super(message);
     }
 
     /**
-     * @param message error description from the API
+     * Creates a validation exception with a cause.
+     *
+     * @param message error description
      * @param cause root cause
      */
     public DaytonaValidationException(String message, Throwable cause) {
-        super(422, message, cause);
+        super(message, cause);
+    }
+
+    public DaytonaValidationException(String message, String code, String source) {
+        super(message, code, source);
+    }
+
+    public DaytonaValidationException(String message, Throwable cause, String code, String source) {
+        super(message, cause, code, source);
     }
 }
