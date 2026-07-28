@@ -26,7 +26,7 @@ import type {
   MetricSeries,
 } from '@daytona/api-client'
 import { Daytona } from './Daytona'
-import type { Resources } from './Daytona'
+import type { ForkSandboxParams, Resources } from './Daytona'
 import {
   FileSystemApi,
   GitApi,
@@ -455,7 +455,7 @@ export class Sandbox {
    * The forked Sandbox is a copy-on-write clone of the original. It starts
    * with the same disk contents but operates independently from that point on.
    *
-   * @param {object} [params] - Fork parameters
+   * @param {ForkSandboxParams} [params] - Fork parameters
    * @param {string} [params.name] - Optional name for the forked Sandbox. If not provided, a unique name will be generated.
    * @param {number} [timeout] - Maximum time to wait in seconds. 0 means no timeout.
    *                            Defaults to 60-second timeout.
@@ -465,12 +465,12 @@ export class Sandbox {
    *
    * @example
    * const sandbox = await daytona.get('my-sandbox');
-   * const forked = await sandbox._experimental_fork({ name: 'my-fork' });
+   * const forked = await sandbox.fork({ name: 'my-fork' });
    * console.log(`Forked sandbox: ${forked.id}`);
    */
   @WithInstrumentation()
   @withEvents
-  public async _experimental_fork(params?: { name?: string }, timeout = 60): Promise<Sandbox> {
+  public async fork(params?: ForkSandboxParams, timeout = 60): Promise<Sandbox> {
     if (timeout < 0) {
       throw new DaytonaValidationError('Timeout must be a non-negative number')
     }
@@ -504,6 +504,14 @@ export class Sandbox {
   }
 
   /**
+   * @deprecated Use `fork` instead. This method will be removed in a future version.
+   * @see {@link Sandbox.fork}
+   */
+  public async _experimental_fork(params?: ForkSandboxParams, timeout = 60): Promise<Sandbox> {
+    return this.fork(params, timeout)
+  }
+
+  /**
    * Creates a snapshot from the current state of the Sandbox.
    *
    * This captures the Sandbox's filesystem into a reusable snapshot that can be
@@ -519,12 +527,12 @@ export class Sandbox {
    *
    * @example
    * const sandbox = await daytona.get('my-sandbox');
-   * await sandbox._experimental_createSnapshot('my-snapshot');
+   * await sandbox.createSnapshot('my-snapshot');
    * console.log('Snapshot created successfully');
    */
   @WithInstrumentation()
   @withEvents
-  public async _experimental_createSnapshot(name: string, timeout = 60): Promise<void> {
+  public async createSnapshot(name: string, timeout = 60): Promise<void> {
     if (timeout < 0) {
       throw new DaytonaValidationError('Timeout must be a non-negative number')
     }
@@ -540,6 +548,17 @@ export class Sandbox {
     const timeElapsed = Date.now() - startTime
     const remainingTimeout = timeout ? Math.max(0.001, timeout - timeElapsed / 1000) : timeout
     await this.waitForSnapshotComplete(remainingTimeout)
+  }
+
+  /**
+   * @param {string} name - Name for the new snapshot
+   * @param {number} [timeout] - Maximum time to wait in seconds. 0 means no timeout.
+   *                            Defaults to 60-second timeout.
+   * @deprecated Use `createSnapshot` instead. This method will be removed in a future version.
+   * @see {@link Sandbox.createSnapshot}
+   */
+  public async _experimental_createSnapshot(name: string, timeout = 60): Promise<void> {
+    return this.createSnapshot(name, timeout)
   }
 
   private async waitForSnapshotComplete(timeout: number) {
