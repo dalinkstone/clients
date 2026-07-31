@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import type { RawAxiosRequestConfig } from 'axios'
 import { Configuration, ProcessApi } from '@daytona/toolbox-api-client'
 import type {
   Command,
@@ -29,6 +30,10 @@ export const MAX_PREFIX_LEN = Math.max(STDOUT_PREFIX_BYTES.length, STDERR_PREFIX
 // Capability token advertised on PTY WebSocket connects so the daemon sends the
 // "exited" control message; clients that don't send it only get the close frame.
 const PTY_EXIT_CONTROL_SUBPROTOCOL = 'X-Daytona-Pty-Exit-Control'
+
+// Pads the per-request HTTP deadline over the server-side execution timeout,
+// mirroring Go's execContext (timeout + 5s) and Python's `_request_timeout = timeout + 5`.
+const EXEC_TIMEOUT_BUFFER_MS = 5000
 
 /**
  * Parameters for code execution.
@@ -66,7 +71,21 @@ export class Process {
     private readonly apiClient: ProcessApi,
     private readonly getPreviewToken: () => Promise<string>,
     private readonly language?: string,
+    private readonly requestTimeoutMs?: number,
   ) {}
+
+  // With an explicit execution timeout the HTTP wait must not be capped by a
+  // configured bounded DaytonaConfig.requestTimeoutMs: the request is bounded by
+  // the execution timeout + buffer instead. A non-positive execution timeout
+  // leaves the wait uncapped (0 disables the server-side limit; negatives fail
+  // fast at the API). Without a configured positive requestTimeoutMs no override
+  // is applied, preserving the client-wide default deadline as-is.
+  private execRequestOptions(timeout?: number): RawAxiosRequestConfig | undefined {
+    if (timeout === undefined || this.requestTimeoutMs === undefined || this.requestTimeoutMs <= 0) {
+      return undefined
+    }
+    return { timeout: timeout > 0 ? timeout * 1000 + EXEC_TIMEOUT_BUFFER_MS : 0 }
+  }
 
   /**
    * Executes a shell command in the Sandbox.
@@ -74,7 +93,9 @@ export class Process {
    * @param {string} command - Shell command to execute
    * @param {string} [cwd] - Working directory for command execution. If not specified, uses the sandbox working directory.
    * @param {Record<string, string>} [env] - Environment variables to set for the command
-   * @param {number} [timeout] - Maximum time in seconds to wait for the command to complete.
+   * @param {number} [timeout] - Maximum time in seconds to wait for the command to complete. The command is
+   *                             terminated when it elapses. The HTTP request waits for the full timeout, even beyond
+   *                             the client-wide `requestTimeoutMs`; `0` disables the server-side limit.
    * @returns {Promise<ExecuteResponse>} Command execution results containing:
    *                                    - exitCode: The command's exit status
    *                                    - result: Standard output from the command
@@ -100,12 +121,15 @@ export class Process {
     env?: Record<string, string>,
     timeout?: number,
   ): Promise<ExecuteResponse> {
-    const response = await this.apiClient.executeCommand({
-      command,
-      timeout,
-      cwd: cwd,
-      envs: env && Object.keys(env).length ? env : undefined,
-    })
+    const response = await this.apiClient.executeCommand(
+      {
+        command,
+        timeout,
+        cwd: cwd,
+        envs: env && Object.keys(env).length ? env : undefined,
+      },
+      this.execRequestOptions(timeout),
+    )
 
     const result = response.data.result ?? ''
     return {
@@ -122,7 +146,9 @@ export class Process {
    *
    * @param {string} code - Code to execute
    * @param {CodeRunParams} params - Parameters for code execution
-   * @param {number} [timeout] - Maximum time in seconds to wait for execution to complete
+   * @param {number} [timeout] - Maximum time in seconds to wait for execution to complete. The execution is
+   *                             terminated when it elapses. The HTTP request waits for the full timeout, even beyond
+   *                             the client-wide `requestTimeoutMs`; `0` disables the server-side limit.
    * @returns {Promise<ExecuteResponse>} Code execution results containing:
    *                                    - exitCode: The execution's exit status
    *                                    - result: Standard output from the code
@@ -188,7 +214,7 @@ export class Process {
       envs: params?.env,
       timeout,
     }
-    const response = await this.apiClient.codeRun(request)
+    const response = await this.apiClient.codeRun(request, this.execRequestOptions(timeout))
     const data = response.data
 
     const charts = data.artifacts?.charts?.map(parseChart) ?? []

@@ -33,7 +33,7 @@ jest.mock('../PtyHandle', () => ({
 }))
 
 describe('Process', () => {
-  const makeProcess = async (language = 'python') => {
+  const makeProcess = async (language = 'python', requestTimeoutMs?: number) => {
     const { Process } = await import('../Process')
     const apiClient = {
       executeCommand: jest.fn(),
@@ -60,7 +60,13 @@ describe('Process', () => {
       baseOptions: { headers: { Authorization: 'Bearer t' } },
     } as unknown as Configuration
 
-    const process = new Process(cfg, apiClient as unknown as never, async () => 'preview-token', language)
+    const process = new Process(
+      cfg,
+      apiClient as unknown as never,
+      async () => 'preview-token',
+      language,
+      requestTimeoutMs,
+    )
 
     return { process, apiClient }
   }
@@ -75,12 +81,55 @@ describe('Process', () => {
     apiClient.executeCommand.mockResolvedValue(createApiResponse({ exitCode: 0, result: 'hello' }))
     const result = await process.executeCommand('echo hi', '/tmp', { GOOD_KEY: '1' }, 4)
     expect(result).toMatchObject({ exitCode: 0, result: 'hello' })
-    expect(apiClient.executeCommand).toHaveBeenCalledWith({
-      command: 'echo hi',
-      timeout: 4,
-      cwd: '/tmp',
-      envs: { GOOD_KEY: '1' },
-    })
+    expect(apiClient.executeCommand).toHaveBeenCalledWith(
+      {
+        command: 'echo hi',
+        timeout: 4,
+        cwd: '/tmp',
+        envs: { GOOD_KEY: '1' },
+      },
+      undefined,
+    )
+  })
+
+  it('executeCommand with exec timeout does not override the HTTP deadline when requestTimeoutMs is not configured', async () => {
+    const { process, apiClient } = await makeProcess()
+
+    apiClient.executeCommand.mockResolvedValue(createApiResponse({ exitCode: 0, result: '' }))
+    await process.executeCommand('sleep 3', undefined, undefined, 4)
+    expect(apiClient.executeCommand).toHaveBeenCalledWith(expect.objectContaining({ timeout: 4 }), undefined)
+  })
+
+  it('executeCommand with exec timeout is not capped by a configured requestTimeoutMs', async () => {
+    const { process, apiClient } = await makeProcess('python', 5000)
+
+    apiClient.executeCommand.mockResolvedValue(createApiResponse({ exitCode: 0, result: '' }))
+    await process.executeCommand('sleep 3', undefined, undefined, 4)
+    expect(apiClient.executeCommand).toHaveBeenCalledWith(expect.objectContaining({ timeout: 4 }), { timeout: 9000 })
+  })
+
+  it('executeCommand without exec timeout leaves the configured requestTimeoutMs in effect', async () => {
+    const { process, apiClient } = await makeProcess('python', 5000)
+
+    apiClient.executeCommand.mockResolvedValue(createApiResponse({ exitCode: 0, result: '' }))
+    await process.executeCommand('ls')
+    expect(apiClient.executeCommand).toHaveBeenCalledWith(expect.anything(), undefined)
+  })
+
+  it('executeCommand with exec timeout 0 uncaps the HTTP wait under a configured requestTimeoutMs', async () => {
+    const { process, apiClient } = await makeProcess('python', 5000)
+
+    apiClient.executeCommand.mockResolvedValue(createApiResponse({ exitCode: 0, result: '' }))
+    await process.executeCommand('sleep 100', undefined, undefined, 0)
+    expect(apiClient.executeCommand).toHaveBeenCalledWith(expect.objectContaining({ timeout: 0 }), { timeout: 0 })
+  })
+
+  it('executeCommand applies no override when requestTimeoutMs is 0 (deadline already disabled)', async () => {
+    const { process, apiClient } = await makeProcess('python', 0)
+
+    apiClient.executeCommand.mockResolvedValue(createApiResponse({ exitCode: 0, result: '' }))
+    await process.executeCommand('sleep 3', undefined, undefined, 4)
+    expect(apiClient.executeCommand).toHaveBeenCalledWith(expect.anything(), undefined)
   })
 
   it('executeCommand omits envs when empty', async () => {
@@ -88,12 +137,15 @@ describe('Process', () => {
 
     apiClient.executeCommand.mockResolvedValue(createApiResponse({ exitCode: 0, result: '' }))
     await process.executeCommand('ls')
-    expect(apiClient.executeCommand).toHaveBeenCalledWith({
-      command: 'ls',
-      timeout: undefined,
-      cwd: undefined,
-      envs: undefined,
-    })
+    expect(apiClient.executeCommand).toHaveBeenCalledWith(
+      {
+        command: 'ls',
+        timeout: undefined,
+        cwd: undefined,
+        envs: undefined,
+      },
+      undefined,
+    )
   })
 
   it('executeCommand returns artifacts with stdout', async () => {
@@ -122,13 +174,16 @@ describe('Process', () => {
     const result = await process.codeRun('print(1)')
     expect(result.exitCode).toBe(0)
     expect(result.result).toBe('ok')
-    expect(apiClient.codeRun).toHaveBeenCalledWith({
-      code: 'print(1)',
-      language: 'python',
-      argv: undefined,
-      envs: undefined,
-      timeout: undefined,
-    })
+    expect(apiClient.codeRun).toHaveBeenCalledWith(
+      {
+        code: 'print(1)',
+        language: 'python',
+        argv: undefined,
+        envs: undefined,
+        timeout: undefined,
+      },
+      undefined,
+    )
   })
 
   it('codeRun parses chart artifacts and defaults missing fields', async () => {
@@ -154,13 +209,23 @@ describe('Process', () => {
     const { process, apiClient } = await makeProcess('typescript')
     apiClient.codeRun.mockResolvedValue(createApiResponse({ exitCode: 0, result: '', artifacts: {} }))
     await process.codeRun('console.log(1)', { argv: ['--flag'], env: { NODE_ENV: 'test' } }, 10)
-    expect(apiClient.codeRun).toHaveBeenCalledWith({
-      code: 'console.log(1)',
-      language: 'typescript',
-      argv: ['--flag'],
-      envs: { NODE_ENV: 'test' },
-      timeout: 10,
-    })
+    expect(apiClient.codeRun).toHaveBeenCalledWith(
+      {
+        code: 'console.log(1)',
+        language: 'typescript',
+        argv: ['--flag'],
+        envs: { NODE_ENV: 'test' },
+        timeout: 10,
+      },
+      undefined,
+    )
+  })
+
+  it('codeRun with exec timeout is not capped by a configured requestTimeoutMs', async () => {
+    const { process, apiClient } = await makeProcess('typescript', 5000)
+    apiClient.codeRun.mockResolvedValue(createApiResponse({ exitCode: 0, result: '', artifacts: {} }))
+    await process.codeRun('console.log(1)', undefined, 10)
+    expect(apiClient.codeRun).toHaveBeenCalledWith(expect.objectContaining({ timeout: 10 }), { timeout: 15000 })
   })
 
   it('codeRun throws when language not set', async () => {
