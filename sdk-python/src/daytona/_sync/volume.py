@@ -4,9 +4,10 @@
 from __future__ import annotations
 
 from daytona_api_client import CreateVolume, VolumesApi
-from daytona_api_client.exceptions import NotFoundException
 
+from .._utils.errors import intercept_errors
 from .._utils.otel_decorator import with_instrumentation
+from ..common.errors import DaytonaNotFoundError
 from ..common.volume import Volume
 
 
@@ -16,6 +17,7 @@ class VolumeService:
     def __init__(self, volumes_api: VolumesApi):
         self.__volumes_api = volumes_api
 
+    @intercept_errors(message_prefix="Failed to list volumes: ")
     def list(self) -> list[Volume]:
         """List all Volumes.
 
@@ -31,6 +33,10 @@ class VolumeService:
             ```
         """
         return [Volume.from_dto(volume) for volume in self.__volumes_api.list_volumes()]
+
+    @intercept_errors(message_prefix="Failed to get volume: ")
+    def __get(self, name: str) -> Volume:
+        return Volume.from_dto(self.__volumes_api.get_volume_by_name(name))
 
     @with_instrumentation()
     def get(self, name: str, create: bool = False) -> Volume:
@@ -51,12 +57,13 @@ class VolumeService:
             ```
         """
         try:
-            return Volume.from_dto(self.__volumes_api.get_volume_by_name(name))
-        except NotFoundException as e:
+            return self.__get(name)
+        except DaytonaNotFoundError:
             if create:
                 return self.create(name)
-            raise e
+            raise
 
+    @intercept_errors(message_prefix="Failed to create volume: ")
     @with_instrumentation()
     def create(self, name: str) -> Volume:
         """Create a new Volume.
@@ -76,6 +83,7 @@ class VolumeService:
         """
         return Volume.from_dto(self.__volumes_api.create_volume(CreateVolume(name=name)))
 
+    @intercept_errors(message_prefix="Failed to delete volume: ")
     @with_instrumentation()
     def delete(self, volume: Volume) -> None:
         """Delete a Volume.
