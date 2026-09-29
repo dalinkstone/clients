@@ -24,7 +24,9 @@ from opentelemetry.semconv.attributes import service_attributes
 
 from daytona_api_client import ApiClient, ConfigApi, Configuration, CreateBuildInfo, CreateSandbox
 from daytona_api_client import GpuType as SyncGpuType
-from daytona_api_client import ObjectStorageApi, SandboxApi, SandboxState, SandboxVolume, SecretApi, SnapshotsApi
+from daytona_api_client import ObjectStorageApi
+from daytona_api_client import Sandbox as SandboxDto
+from daytona_api_client import SandboxApi, SandboxState, SandboxVolume, SecretApi, SnapshotsApi
 from daytona_api_client import VolumesApi as VolumesApi
 from daytona_api_client import WarmPoolsApi
 from daytona_toolbox_api_client import ApiClient as ToolboxApiClient
@@ -55,6 +57,10 @@ from .secret import SecretService
 from .snapshot import SnapshotService
 from .volume import VolumeService
 from .warm_pool import WarmPoolService
+
+
+def _destroyed_by_lifecycle(sandbox: SandboxDto) -> bool:
+    return sandbox.state == SandboxState.DESTROYED and bool(sandbox.queue_timed_out_at or sandbox.spot_evicted_at)
 
 
 class Daytona:
@@ -491,6 +497,9 @@ class Daytona:
         if params.ttl_minutes is not None and params.ttl_minutes < 0:
             raise DaytonaValidationError("ttl_minutes must be a non-negative integer")
 
+        if params.queue_timeout is not None and (isinstance(params.queue_timeout, bool) or params.queue_timeout < 1):
+            raise DaytonaValidationError("queue_timeout must be a positive integer")
+
         target = self._target
 
         volumes = []
@@ -517,6 +526,7 @@ class Daytona:
             auto_archive_interval=params.auto_archive_interval,
             auto_delete_interval=params.auto_delete_interval,
             ttl_minutes=params.ttl_minutes,
+            queue_timeout=params.queue_timeout,
             volumes=volumes,
             secrets=secrets,
             network_block_all=params.network_block_all,
@@ -571,20 +581,30 @@ class Daytona:
                     SandboxState.STARTING,
                     SandboxState.ERROR,
                     SandboxState.BUILD_FAILED,
+                    SandboxState.DESTROYED,
                 ]
 
             while response_ref["response"].state == SandboxState.PENDING_BUILD:
                 time.sleep(1)
                 response_ref["response"] = self._sandbox_api.get_sandbox(response_ref["response"].id)
 
-            asyncio.run(
-                process_streaming_response(
-                    url=build_logs_url + "?follow=true",
-                    headers=cast(dict[str, str], self._sandbox_api.api_client.default_headers),
-                    on_chunk=lambda chunk: on_snapshot_create_logs(chunk.rstrip()),
-                    should_terminate=should_terminate,
+            try:
+                asyncio.run(
+                    process_streaming_response(
+                        url=build_logs_url + "?follow=true",
+                        headers=cast(dict[str, str], self._sandbox_api.api_client.default_headers),
+                        on_chunk=lambda chunk: on_snapshot_create_logs(chunk.rstrip()),
+                        should_terminate=should_terminate,
+                    )
                 )
-            )
+            except Exception as stream_error:
+                try:
+                    refreshed = self._sandbox_api.get_sandbox(response_ref["response"].id)
+                except Exception:
+                    raise stream_error from None
+                if not _destroyed_by_lifecycle(refreshed):
+                    raise
+                response_ref["response"] = refreshed
             response = response_ref["response"]
 
         sandbox = Sandbox(

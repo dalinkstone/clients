@@ -70,6 +70,8 @@ jest.mock(
       STARTING: 'starting',
       ERROR: 'error',
       BUILD_FAILED: 'build_failed',
+      BUILDING_SNAPSHOT: 'building_snapshot',
+      DESTROYED: 'destroyed',
     },
   }),
   { virtual: true },
@@ -432,6 +434,7 @@ describe('Daytona', () => {
         autoArchiveInterval?: number
         autoDeleteInterval?: number
         ttlMinutes?: number
+        queueTimeout?: number
         ephemeral?: boolean
       },
     ]
@@ -456,6 +459,9 @@ describe('Daytona', () => {
     ],
     [{}, 'autoArchiveInterval must be a non-negative integer', { autoArchiveInterval: -1 }],
     [{}, 'ttlMinutes must be a non-negative integer', { ttlMinutes: -1 }],
+    [{}, 'queueTimeout must be a positive integer', { queueTimeout: 0 }],
+    [{}, 'queueTimeout must be a positive integer', { queueTimeout: 1.5 }],
+    [{}, 'queueTimeout must be a positive integer', { queueTimeout: -1 }],
   ])('validates create input %#', async (optionsPart, message, params) => {
     const { Daytona } = await import('../Daytona')
     const instance = new Daytona({ apiKey: 'k', apiUrl: 'http://api', target: 'us' })
@@ -545,6 +551,34 @@ describe('Daytona', () => {
 
     const payload = mockSandboxApi.createSandbox.mock.calls[0][0] as { kvm?: boolean }
     expect(payload.kvm).toBe(true)
+  })
+
+  it('passes queueTimeout to the api-client when set', async () => {
+    const { Daytona } = await import('../Daytona')
+    const instance = new Daytona({ apiKey: 'k', apiUrl: 'http://api', target: 'us' })
+
+    mockSandboxApi.createSandbox.mockResolvedValue(
+      createApiResponse({ id: 'sb-queue-timeout', state: 'started', labels: { 'code-toolbox-language': 'python' } }),
+    )
+
+    await instance.create({ language: 'python', queueTimeout: 7 })
+
+    const payload = mockSandboxApi.createSandbox.mock.calls[0][0] as { queueTimeout?: number }
+    expect(payload.queueTimeout).toBe(7)
+  })
+
+  it('leaves queueTimeout undefined when not provided', async () => {
+    const { Daytona } = await import('../Daytona')
+    const instance = new Daytona({ apiKey: 'k', apiUrl: 'http://api', target: 'us' })
+
+    mockSandboxApi.createSandbox.mockResolvedValue(
+      createApiResponse({ id: 'sb-noqueue', state: 'started', labels: { 'code-toolbox-language': 'python' } }),
+    )
+
+    await instance.create({ language: 'python' })
+
+    const payload = mockSandboxApi.createSandbox.mock.calls[0][0] as { queueTimeout?: number }
+    expect(payload.queueTimeout).toBeUndefined()
   })
 
   it('leaves kvm undefined when not provided', async () => {
@@ -655,6 +689,95 @@ describe('Daytona', () => {
       source: 'DAYTONA_DAEMON',
       statusCode: 504,
     })
+  })
+
+  it('raises DaytonaQueueTimeoutError when the build log stream fails on a queue timed out sandbox', async () => {
+    const { Daytona } = await import('../Daytona')
+    const { Sandbox } = await import('../Sandbox')
+    const { DaytonaQueueTimeoutError } = await import('../errors/DaytonaError')
+    const instance = new Daytona({ apiKey: 'k', apiUrl: 'http://api', target: 'us' })
+
+    mockSandboxApi.createSandbox.mockResolvedValue(
+      createApiResponse({ id: 'sb-build', state: 'pending_build', labels: { 'code-toolbox-language': 'python' } }),
+    )
+    mockSandboxApi.getSandbox
+      .mockResolvedValueOnce(createApiResponse({ id: 'sb-build', state: 'building_snapshot' }))
+      .mockResolvedValueOnce(
+        createApiResponse({
+          id: 'sb-build',
+          state: 'destroyed',
+          queueTimeout: 1,
+          queueTimedOutAt: '2026-09-29T10:00:00.000Z',
+          labels: { 'code-toolbox-language': 'python' },
+        }),
+      )
+    mockSandboxApi.getBuildLogsUrl.mockResolvedValue(createApiResponse({ url: 'http://proxy/build-logs' }))
+    mockProcessStreamingResponse.mockRejectedValue(new Error('500 Internal Server Error'))
+    const queueError = new DaytonaQueueTimeoutError(
+      'Sandbox sb-build was destroyed after waiting 1 minute for a runner',
+    )
+    let constructedDto: { state?: string; queueTimedOutAt?: string } | undefined
+    ;(Sandbox as jest.Mock).mockImplementationOnce(
+      (dto: { id: string; state?: string; queueTimedOutAt?: string }, ..._args: unknown[]) => {
+        constructedDto = dto
+        return {
+          ...dto,
+          start: jest.fn(),
+          stop: jest.fn(),
+          delete: jest.fn(),
+          waitUntilStarted: jest.fn().mockRejectedValue(queueError),
+          fork: jest.fn(),
+          _experimental_fork: jest.fn(),
+        }
+      },
+    )
+
+    await expect(
+      instance.create({ image: 'python:3.12', language: 'python' }, { timeout: 7, onSnapshotCreateLogs: jest.fn() }),
+    ).rejects.toBe(queueError)
+    expect(constructedDto).toMatchObject({ state: 'destroyed', queueTimedOutAt: '2026-09-29T10:00:00.000Z' })
+  })
+
+  it('rethrows the build log stream error when the sandbox is still alive', async () => {
+    const { Daytona } = await import('../Daytona')
+    const instance = new Daytona({ apiKey: 'k', apiUrl: 'http://api', target: 'us' })
+
+    mockSandboxApi.createSandbox.mockResolvedValue(
+      createApiResponse({ id: 'sb-build', state: 'pending_build', labels: { 'code-toolbox-language': 'python' } }),
+    )
+    mockSandboxApi.getSandbox.mockResolvedValue(createApiResponse({ id: 'sb-build', state: 'building_snapshot' }))
+    mockSandboxApi.getBuildLogsUrl.mockResolvedValue(createApiResponse({ url: 'http://proxy/build-logs' }))
+    const streamError = new Error('stream broke')
+    mockProcessStreamingResponse.mockRejectedValue(streamError)
+
+    await expect(
+      instance.create({ image: 'python:3.12', language: 'python' }, { timeout: 7, onSnapshotCreateLogs: jest.fn() }),
+    ).rejects.toBe(streamError)
+  })
+
+  it('does not wrap DaytonaQueueTimeoutError from sandbox startup in create', async () => {
+    const { Daytona } = await import('../Daytona')
+    const { Sandbox } = await import('../Sandbox')
+    const { DaytonaQueueTimeoutError } = await import('../errors/DaytonaError')
+    const instance = new Daytona({ apiKey: 'k', apiUrl: 'http://api', target: 'us' })
+
+    mockSandboxApi.createSandbox.mockResolvedValue(
+      createApiResponse({ id: 'sb-queue', state: 'pending_build', labels: { 'code-toolbox-language': 'python' } }),
+    )
+    const queueError = new DaytonaQueueTimeoutError(
+      'Sandbox sb-queue was destroyed after waiting 1 minute for a runner',
+    )
+    ;(Sandbox as jest.Mock).mockImplementationOnce((dto: { id: string; state?: string }, ..._args: unknown[]) => ({
+      ...dto,
+      start: jest.fn(),
+      stop: jest.fn(),
+      delete: jest.fn(),
+      waitUntilStarted: jest.fn().mockRejectedValue(queueError),
+      fork: jest.fn(),
+      _experimental_fork: jest.fn(),
+    }))
+
+    await expect(instance.create({ language: 'python' }, { timeout: 7 })).rejects.toBe(queueError)
   })
 
   it('gives each listed sandbox its own Configuration instance', async () => {

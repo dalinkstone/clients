@@ -222,7 +222,19 @@ public class Daytona implements AutoCloseable {
         String initialState = response.getState() != null ? response.getState().getValue() : "";
         if (onSnapshotCreateLogs != null && "pending_build".equals(initialState)) {
             waitForBuildState(response.getId(), timeoutSeconds, startTime);
-            streamSandboxBuildLogs(response.getId(), onSnapshotCreateLogs, timeoutSeconds, startTime);
+            try {
+                streamSandboxBuildLogs(response.getId(), onSnapshotCreateLogs, timeoutSeconds, startTime);
+            } catch (DaytonaException streamError) {
+                io.daytona.api.client.model.Sandbox current;
+                try {
+                    current = ExceptionMapper.callMain(() -> sandboxApi.getSandbox(response.getId(), null, null));
+                } catch (DaytonaException refreshError) {
+                    throw streamError;
+                }
+                if (!isDestroyedByLifecycle(current)) {
+                    throw streamError;
+                }
+            }
         }
 
         Sandbox sandbox = new Sandbox(sandboxApi, config,
@@ -579,6 +591,9 @@ public class Daytona implements AutoCloseable {
         if (params.getTtlMinutes() != null && params.getTtlMinutes() < 0) {
             throw new IllegalArgumentException("ttlMinutes must be a non-negative integer");
         }
+        if (params.getQueueTimeout() != null && params.getQueueTimeout() < 1) {
+            throw new IllegalArgumentException("queueTimeout must be a positive integer");
+        }
 
         if (params.getName() != null) body.setName(params.getName());
         if (params.getUser() != null) body.setUser(params.getUser());
@@ -603,6 +618,7 @@ public class Daytona implements AutoCloseable {
         if (params.getAutoArchiveInterval() != null) body.setAutoArchiveInterval(params.getAutoArchiveInterval());
         if (params.getAutoDeleteInterval() != null) body.setAutoDeleteInterval(params.getAutoDeleteInterval());
         if (params.getTtlMinutes() != null) body.setTtlMinutes(params.getTtlMinutes());
+        if (params.getQueueTimeout() != null) body.setQueueTimeout(params.getQueueTimeout());
         if (params.getNetworkBlockAll() != null) body.setNetworkBlockAll(params.getNetworkBlockAll());
         if (params.getKvm() != null) body.setKvm(params.getKvm());
         if (params.getDomainAllowList() != null) body.setDomainAllowList(params.getDomainAllowList());
@@ -756,7 +772,13 @@ public class Daytona implements AutoCloseable {
         streamer.streamLogs(logsUrl.getUrl(), onLog, () -> {
             io.daytona.api.client.model.Sandbox s = ExceptionMapper.callMain(() -> sandboxApi.getSandbox(sandboxId, null, null));
             String state = s.getState() != null ? s.getState().getValue() : "";
-            return "started".equals(state) || "starting".equals(state) || "error".equals(state) || "build_failed".equals(state);
+            return "started".equals(state) || "starting".equals(state) || "error".equals(state)
+                    || "build_failed".equals(state) || "destroyed".equals(state);
         });
+    }
+
+    private static boolean isDestroyedByLifecycle(io.daytona.api.client.model.Sandbox sandbox) {
+        String state = sandbox.getState() != null ? sandbox.getState().getValue() : "";
+        return "destroyed".equals(state) && (sandbox.getQueueTimedOutAt() != null || sandbox.getSpotEvictedAt() != null);
     }
 }

@@ -10,8 +10,11 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from daytona.common.daytona import CreateSandboxFromImageParams, CreateSandboxFromSnapshotParams, DaytonaConfig
-from daytona.common.errors import DaytonaAuthenticationError, DaytonaValidationError
+from daytona.common.errors import DaytonaAuthenticationError, DaytonaError, DaytonaValidationError
 from daytona.common.sandbox import Resources
+from daytona_api_client import SandboxState
+
+from .conftest import make_sandbox_dto
 
 SYNC_MODULE = "daytona._sync.daytona"
 
@@ -213,6 +216,39 @@ class TestDaytonaCreateValidation:
         assert create_request.disk == 8
         assert create_request.gpu == 1
 
+    def test_create_raises_queue_timeout_when_build_log_stream_fails_on_timed_out_sandbox(self, env_with_api_key):
+        from daytona.common.errors import DaytonaQueueTimeoutError
+
+        daytona = _make_daytona()
+        daytona._sandbox_api = MagicMock()
+        daytona._sandbox_api.create_sandbox.return_value = make_sandbox_dto(state=SandboxState.PENDING_BUILD)
+        daytona._sandbox_api.get_sandbox.side_effect = [
+            make_sandbox_dto(state=SandboxState.BUILDING_SNAPSHOT),
+            make_sandbox_dto(state=SandboxState.DESTROYED, queue_timeout=1, queue_timed_out_at="2026-09-29T10:00:00Z"),
+        ]
+        params = CreateSandboxFromImageParams(image="python:3.12", queue_timeout=1)
+
+        with (
+            patch(f"{SYNC_MODULE}.process_streaming_response", side_effect=DaytonaError("500 Internal Server Error")),
+            patch(f"{SYNC_MODULE}.time.sleep"),
+        ):
+            with pytest.raises(DaytonaQueueTimeoutError, match="waiting 1 minute for a runner"):
+                daytona.create(params, on_snapshot_create_logs=lambda _chunk: None)
+
+    def test_create_rethrows_build_log_stream_error_when_sandbox_is_alive(self, env_with_api_key):
+        daytona = _make_daytona()
+        daytona._sandbox_api = MagicMock()
+        daytona._sandbox_api.create_sandbox.return_value = make_sandbox_dto(state=SandboxState.PENDING_BUILD)
+        daytona._sandbox_api.get_sandbox.return_value = make_sandbox_dto(state=SandboxState.BUILDING_SNAPSHOT)
+        params = CreateSandboxFromImageParams(image="python:3.12")
+
+        with (
+            patch(f"{SYNC_MODULE}.process_streaming_response", side_effect=DaytonaError("stream broke")),
+            patch(f"{SYNC_MODULE}.time.sleep"),
+        ):
+            with pytest.raises(DaytonaError, match="stream broke"):
+                daytona.create(params, on_snapshot_create_logs=lambda _chunk: None)
+
     def test_create_from_snapshot_sets_snapshot_and_volume_mounts(self, env_with_api_key, sandbox_dto):
         from daytona.common.volume import VolumeMount
 
@@ -249,6 +285,36 @@ class TestDaytonaCreateValidation:
         daytona.create(params)
         create_request = daytona._sandbox_api.create_sandbox.call_args.args[0]
         assert create_request.kvm is None
+
+    def test_create_with_queue_timeout(self, env_with_api_key, sandbox_dto):
+        daytona = _make_daytona()
+        daytona._sandbox_api = MagicMock()
+        daytona._sandbox_api.create_sandbox.return_value = sandbox_dto
+        params = CreateSandboxFromSnapshotParams(language="python", queue_timeout=7)
+        daytona.create(params)
+        create_request = daytona._sandbox_api.create_sandbox.call_args.args[0]
+        assert create_request.queue_timeout == 7
+
+    def test_create_default_queue_timeout_is_none(self, env_with_api_key, sandbox_dto):
+        daytona = _make_daytona()
+        daytona._sandbox_api = MagicMock()
+        daytona._sandbox_api.create_sandbox.return_value = sandbox_dto
+        params = CreateSandboxFromSnapshotParams(language="python")
+        assert params.queue_timeout is None
+        daytona.create(params)
+        create_request = daytona._sandbox_api.create_sandbox.call_args.args[0]
+        assert create_request.queue_timeout is None
+
+    @pytest.mark.parametrize("queue_timeout", [0, -1, True])
+    def test_create_rejects_invalid_queue_timeout(self, env_with_api_key, sandbox_dto, queue_timeout):
+        daytona = _make_daytona()
+        daytona._sandbox_api = MagicMock()
+        daytona._sandbox_api.create_sandbox.return_value = sandbox_dto
+        params = CreateSandboxFromSnapshotParams(language="python")
+        params.queue_timeout = queue_timeout
+        with pytest.raises(DaytonaValidationError, match="queue_timeout must be a positive integer"):
+            daytona.create(params)
+        daytona._sandbox_api.create_sandbox.assert_not_called()
 
 
 class TestDaytonaGetAndList:

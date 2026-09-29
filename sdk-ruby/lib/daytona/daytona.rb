@@ -104,7 +104,7 @@ module Daytona
     # @param params [Daytona::CreateSandboxFromSnapshotParams, Daytona::CreateSandboxFromImageParams, Nil] Sandbox creation parameters
     # @return [Daytona::Sandbox] The created sandbox
     # @raise [Daytona::Sdk::Error] If auto_stop_interval, auto_pause_interval, auto_archive_interval, or ttl_minutes is negative,
-    #   or if auto_stop_interval and auto_pause_interval are both non-zero
+    #   if queue_timeout is not a positive integer, or if auto_stop_interval and auto_pause_interval are both non-zero
     def create(params = nil, on_snapshot_create_logs: nil)
       if params.nil?
         params = CreateSandboxFromSnapshotParams.new(language: CodeLanguage::PYTHON)
@@ -249,7 +249,7 @@ module Daytona
     # @param on_snapshot_create_logs [Proc]
     # @return [Daytona::Sandbox] The created sandbox
     # @raise [Daytona::Sdk::Error] If auto_stop_interval, auto_pause_interval, auto_archive_interval, or ttl_minutes is negative,
-    #   or if auto_stop_interval and auto_pause_interval are both non-zero
+    #   if queue_timeout is not a positive integer, or if auto_stop_interval and auto_pause_interval are both non-zero
     def _create(params, timeout: 60, on_snapshot_create_logs: nil)
       raise Sdk::Error, 'Timeout must be a non-negative number' if timeout.negative?
 
@@ -274,6 +274,10 @@ module Daytona
 
       raise Sdk::Error, 'ttl_minutes must be a non-negative integer' if params.ttl_minutes&.negative?
 
+      unless params.queue_timeout.nil? || (params.queue_timeout.is_a?(Integer) && params.queue_timeout >= 1)
+        raise Sdk::Error, 'queue_timeout must be a positive integer'
+      end
+
       labels = params.labels&.dup || {}
       labels[CODE_TOOLBOX_LANGUAGE_LABEL] = params.language.to_s if params.language
 
@@ -288,6 +292,7 @@ module Daytona
         auto_archive_interval: params.auto_archive_interval,
         auto_delete_interval: params.auto_delete_interval,
         ttl_minutes: params.ttl_minutes,
+        queue_timeout: params.queue_timeout,
         volumes: params.volumes,
         secrets: params.secrets&.map { |env_var, secret_name| { env_var.to_s => secret_name.to_s } },
         network_block_all: params.network_block_all,
@@ -333,13 +338,23 @@ module Daytona
           response = sandbox_api.get_sandbox(response.id)
         end
 
-        # Get build logs URL from API
-        build_logs_response = sandbox_api.get_build_logs_url(response.id)
-        uri = URI.parse("#{build_logs_response.url}?follow=true")
+        begin
+          build_logs_response = sandbox_api.get_build_logs_url(response.id)
+          uri = URI.parse("#{build_logs_response.url}?follow=true")
 
-        headers = {}
-        sandbox_api.api_client.update_params_for_auth!(headers, nil, ['bearer'])
-        Util.stream_async(uri:, headers:, on_chunk: on_snapshot_create_logs)
+          headers = {}
+          sandbox_api.api_client.update_params_for_auth!(headers, nil, ['bearer'])
+          Util.stream_async(uri:, headers:, on_chunk: on_snapshot_create_logs)
+        rescue StandardError => e
+          refreshed = begin
+            sandbox_api.get_sandbox(response.id)
+          rescue StandardError
+            raise e
+          end
+          raise e unless destroyed_by_lifecycle?(refreshed)
+
+          response = refreshed
+        end
       end
 
       sandbox = to_sandbox(sandbox_dto: response)
@@ -395,6 +410,15 @@ module Daytona
 
     # @param sandbox_dto [DaytonaApiClient::Sandbox, DaytonaApiClient::SandboxListItem]
     # @return [Daytona::Sandbox]
+    def destroyed_by_lifecycle?(sandbox_dto)
+      if sandbox_dto.state == DaytonaApiClient::SandboxState::DESTROYED &&
+         (sandbox_dto.queue_timed_out_at || sandbox_dto.spot_evicted_at)
+        true
+      else
+        false
+      end
+    end
+
     def to_sandbox(sandbox_dto:)
       Sandbox.new(
         sandbox_dto:,
