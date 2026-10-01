@@ -1006,10 +1006,10 @@ func (r *RecordingService) Download(ctx context.Context, id string, localPath st
 	return withInstrumentationVoid(ctx, nil, "Recording", "Download", func(ctx context.Context) error {
 		// Call the download API
 		sourceFile, httpResp, err := r.toolboxClient.ComputerUseAPI.DownloadRecording(ctx, id).Execute()
+		defer discardTempFile(sourceFile)
 		if err != nil {
 			return errors.ConvertToolboxError(err, httpResp)
 		}
-		defer sourceFile.Close()
 
 		// Create parent directory if it doesn't exist
 		parentDir := filepath.Dir(localPath)
