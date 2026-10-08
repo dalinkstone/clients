@@ -131,38 +131,6 @@ def mock_async_sandbox_api():
 
 
 @pytest.fixture
-def span_exporter(monkeypatch):
-    from opentelemetry.sdk.trace import TracerProvider
-    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
-    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
-
-    from daytona._utils import otel_decorator
-
-    provider = TracerProvider()
-    exporter = InMemorySpanExporter()
-    provider.add_span_processor(SimpleSpanProcessor(exporter))
-    monkeypatch.setattr(otel_decorator, "get_tracer", lambda: provider.get_tracer("test"))
-    yield exporter
-    provider.shutdown()
-
-
-@pytest.fixture
-def build_context_storage():
-    from daytona import BuildContextStorageConfig
-
-    return BuildContextStorageConfig(
-        region_id="us",
-        organization_id="org-1",
-        endpoint_url="https://s3.example.com",
-        bucket_name="build-contexts",
-        region="us-east-2",
-        access_key_id="storage-access-value",
-        secret_access_key="storage-secret-value",
-        session_token="storage-session-value",
-    )
-
-
-@pytest.fixture
 def env_with_api_key(monkeypatch):
     """Set standard env vars for Daytona client initialization."""
     monkeypatch.setenv("DAYTONA_API_KEY", "test-api-key-123")

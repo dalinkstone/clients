@@ -20,7 +20,6 @@ from .._utils.errors import intercept_errors
 from .._utils.otel_decorator import with_instrumentation
 from .._utils.stream import process_streaming_response
 from .._utils.timeout import with_timeout
-from ..common.daytona import BuildContextStorageConfig
 from ..common.errors import DaytonaError, DaytonaValidationError
 from ..common.image import Image
 from ..common.snapshot import CreateSnapshotParams, PaginatedSnapshots, Snapshot, is_snapshot_id
@@ -39,15 +38,11 @@ class AsyncSnapshotService:
         object_storage_api: ObjectStorageApi,
         default_region_id: str | None = None,
         shared_session: SharedAiohttpSession | None = None,
-        build_context_storage: BuildContextStorageConfig | None = None,
-        organization_id: str | None = None,
     ):
         self.__snapshots_api = snapshots_api
         self.__object_storage_api = object_storage_api
         self.__default_region_id = default_region_id
         self.__shared_session = shared_session
-        self.__build_context_storage = build_context_storage
-        self.__organization_id = organization_id
 
     @intercept_errors(message_prefix="Failed to list snapshots: ")
     @with_instrumentation()
@@ -152,20 +147,13 @@ class AsyncSnapshotService:
         """
         create_snapshot_req = CreateSnapshot(
             name=params.name,
-            region_id=params.region_id or self.__default_region_id,
         )
 
         if isinstance(params.image, str):
             create_snapshot_req.image_name = params.image
             create_snapshot_req.entrypoint = params.entrypoint
         else:
-            context_hashes = await AsyncSnapshotService.process_image_context(
-                self.__object_storage_api,
-                params.image,
-                build_context_storage=self.__build_context_storage,
-                region_id=create_snapshot_req.region_id,
-                organization_id=self.__organization_id,
-            )
+            context_hashes = await AsyncSnapshotService.process_image_context(self.__object_storage_api, params.image)
             create_snapshot_req.build_info = CreateBuildInfo(
                 context_hashes=context_hashes,
                 dockerfile_content=(
@@ -187,6 +175,7 @@ class AsyncSnapshotService:
             create_snapshot_req.memory = params.resources.memory
             create_snapshot_req.disk = params.resources.disk
 
+        create_snapshot_req.region_id = params.region_id or self.__default_region_id
         create_snapshot_req.sandbox_class = params.sandbox_class
 
         created_snapshot: SnapshotDto = await self.__snapshots_api.create_snapshot(create_snapshot_req)
@@ -271,14 +260,7 @@ class AsyncSnapshotService:
 
     @staticmethod
     @with_instrumentation()
-    async def process_image_context(
-        object_storage_api: ObjectStorageApi,
-        image: Image,
-        *,
-        build_context_storage: BuildContextStorageConfig | None = None,
-        region_id: str | None = None,
-        organization_id: str | None = None,
-    ) -> list[str]:
+    async def process_image_context(object_storage_api: ObjectStorageApi, image: Image) -> list[str]:
         """Processes the image context by uploading it to object storage.
         Args:
             image (Image): The Image instance.
@@ -288,50 +270,21 @@ class AsyncSnapshotService:
         if not image._context_list:
             return []
 
-        if build_context_storage is not None:
-            build_context_storage = BuildContextStorageConfig.model_validate(build_context_storage.model_dump())
-            if not region_id or region_id != build_context_storage.region_id:
-                raise DaytonaValidationError("Build context storage requires an explicit matching Daytona target")
-            if organization_id and organization_id != build_context_storage.organization_id:
-                raise DaytonaValidationError("Build context storage organization does not match authentication")
+        push_access_creds = await object_storage_api.get_push_access()
 
-        try:
-            if build_context_storage is not None:
-                object_storage = AsyncObjectStorage(
-                    build_context_storage.endpoint_url,
-                    build_context_storage.access_key_id.get_secret_value(),
-                    build_context_storage.secret_access_key.get_secret_value(),
-                    (
-                        build_context_storage.session_token.get_secret_value()
-                        if build_context_storage.session_token
-                        else None
-                    ),
-                    build_context_storage.bucket_name,
-                    region=build_context_storage.region,
-                    sanitize_errors=True,
-                )
-                upload_organization_id = build_context_storage.organization_id
-            else:
-                push_access_creds = await object_storage_api.get_push_access()
-                object_storage = AsyncObjectStorage(
-                    push_access_creds.storage_url,
-                    push_access_creds.access_key,
-                    push_access_creds.secret,
-                    push_access_creds.session_token,
-                    push_access_creds.bucket,
-                    region=push_access_creds.region,
-                )
-                upload_organization_id = push_access_creds.organization_id
+        object_storage = AsyncObjectStorage(
+            push_access_creds.storage_url,
+            push_access_creds.access_key,
+            push_access_creds.secret,
+            push_access_creds.session_token,
+            push_access_creds.bucket,
+            region=push_access_creds.region,
+        )
+        context_hashes: list[str] = []
+        for context in image._context_list:
+            context_hash = await object_storage.upload(
+                context.source_path, push_access_creds.organization_id, context.archive_path
+            )
+            context_hashes.append(context_hash)
 
-            context_hashes: list[str] = []
-            for context in image._context_list:
-                context_hash = await object_storage.upload(
-                    context.source_path, upload_organization_id, context.archive_path
-                )
-                context_hashes.append(context_hash)
-            return context_hashes
-        except Exception:
-            if build_context_storage is None:
-                raise
-        # Constructor failures must not retain the storage library's exception chain.
-        raise DaytonaError("Failed to upload build context to configured object storage")
+        return context_hashes

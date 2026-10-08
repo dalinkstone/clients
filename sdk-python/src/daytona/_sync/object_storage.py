@@ -8,17 +8,12 @@ import os
 import tarfile
 import threading
 from datetime import timedelta
-from typing import TYPE_CHECKING
 
 from obstore.store import S3Store
 
 from .._utils.docs_ignore import docs_ignore
 from .._utils.environment import isolated_env
 from .._utils.otel_decorator import with_instrumentation
-from ..common.errors import DaytonaError
-
-if TYPE_CHECKING:
-    from obstore.store import S3Config
 
 # These four values are coupled; changing one in isolation regresses uploads.
 # UPLOAD_CHUNK_SIZE is the S3 part size, and S3 rejects any part but the last below
@@ -42,7 +37,7 @@ class ObjectStorage:
         endpoint_url (str): The endpoint URL for the object storage service.
         aws_access_key_id (str): The access key ID for the object storage service.
         aws_secret_access_key (str): The secret access key for the object storage service.
-        aws_session_token (str | None): Optional session token for temporary credentials.
+        aws_session_token (str): The session token for the object storage service. Used for temporary credentials.
         bucket_name (str): The name of the bucket to use. Defaults to "daytona-volume-builds".
         region (str): The region of the storage backend.
     """
@@ -52,27 +47,21 @@ class ObjectStorage:
         endpoint_url: str,
         aws_access_key_id: str,
         aws_secret_access_key: str,
-        aws_session_token: str | None,
+        aws_session_token: str,
         bucket_name: str = "daytona-volume-builds",
         *,
         region: str,
-        sanitize_errors: bool = False,
     ):
         self.bucket_name: str = bucket_name
         self.region: str = region
-        self._sanitize_errors: bool = sanitize_errors
-        storage_config: S3Config = {
-            "bucket": bucket_name,
-            "endpoint": endpoint_url,
-            "region": self.region,
-            "access_key_id": aws_access_key_id,
-            "secret_access_key": aws_secret_access_key,
-        }
-        if aws_session_token:
-            storage_config["session_token"] = aws_session_token
         with isolated_env():
             self.store: S3Store = S3Store(
-                **storage_config,
+                bucket=bucket_name,
+                endpoint=endpoint_url,
+                region=self.region,
+                access_key_id=aws_access_key_id,
+                secret_access_key=aws_secret_access_key,
+                session_token=aws_session_token,
                 client_options={"timeout": UPLOAD_REQUEST_TIMEOUT},
                 retry_config={"retry_timeout": UPLOAD_RETRY_TIMEOUT},
             )
@@ -89,26 +78,20 @@ class ObjectStorage:
         Returns:
             str: The hash of the uploaded file.
         """
-        try:
-            if not os.path.exists(path):
-                raise FileNotFoundError(f"Path does not exist: {path}")
+        if not os.path.exists(path):
+            raise FileNotFoundError(f"Path does not exist: {path}")
 
-            path_hash = self._compute_hash_for_path_md5(path, archive_base_path)
-            s3_key = f"{organization_id}/{path_hash}/context.tar"
+        path_hash = self._compute_hash_for_path_md5(path, archive_base_path)
+        s3_key = f"{organization_id}/{path_hash}/context.tar"
 
-            # Check if it already exists in S3
-            if self._file_exists_in_s3(s3_key):
-                return path_hash
-
-            # Upload to S3
-            self._upload_as_tar(s3_key, path, archive_base_path)
-
+        # Check if it already exists in S3
+        if self._file_exists_in_s3(s3_key):
             return path_hash
-        except Exception:
-            if not self._sanitize_errors:
-                raise
-        # Raise outside the handler so telemetry cannot follow a raw __context__.
-        raise DaytonaError("Failed to upload build context to configured object storage")
+
+        # Upload to S3
+        self._upload_as_tar(s3_key, path, archive_base_path)
+
+        return path_hash
 
     @staticmethod
     @docs_ignore

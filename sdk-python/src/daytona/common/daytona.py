@@ -5,20 +5,10 @@ from __future__ import annotations
 
 import warnings
 from enum import Enum
-from typing import Annotated, ClassVar, Literal, cast
-from urllib.parse import urlsplit
+from typing import Annotated, Literal
 
-from pydantic import (
-    BaseModel,
-    ConfigDict,
-    Field,
-    ModelWrapValidatorHandler,
-    SecretStr,
-    ValidationError,
-    field_validator,
-    model_validator,
-)
-from typing_extensions import Self, override
+from pydantic import BaseModel, Field, model_validator
+from typing_extensions import override
 
 from .image import Image
 from .sandbox import Resources
@@ -56,81 +46,6 @@ class CodeLanguage(str, Enum):
 CodeLanguageLiteral = Literal["python", "typescript", "javascript"]
 
 
-class BuildContextStorageConfig(BaseModel):
-    """Explicit S3-compatible storage for local Image build contexts.
-
-    ``region_id`` is the exact Daytona target, while ``region`` is the AWS signing
-    region. The bucket must match the target's runner build-context storage.
-    ``organization_id`` is the safe object-key prefix for the owning organization.
-    Credentials are supplied explicitly; no ambient IAM credential chain is used.
-    """
-
-    model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True, hide_input_in_errors=True)
-
-    region_id: str = Field(min_length=1)
-    organization_id: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
-    endpoint_url: str
-    bucket_name: str = Field(min_length=1)
-    region: str = Field(min_length=1)
-    access_key_id: SecretStr = Field(min_length=1, repr=False)
-    secret_access_key: SecretStr = Field(min_length=1, repr=False)
-    session_token: SecretStr | None = Field(default=None, repr=False)
-
-    @model_validator(mode="wrap")
-    @classmethod
-    def _protect_validation_inputs(cls, values: object, handler: ModelWrapValidatorHandler[Self]) -> Self:
-        if isinstance(values, dict):
-            safe_values = cast(dict[str, object], values).copy()
-            for name in ("access_key_id", "secret_access_key", "session_token"):
-                value = safe_values.get(name)
-                if isinstance(value, str):
-                    safe_values[name] = SecretStr(value)
-            values = safe_values
-        try:
-            return handler(values)
-        except ValidationError as error:
-            details = error.errors(include_input=False)
-        # hide_input_in_errors only affects formatted errors, not errors()/json().
-        raise ValidationError.from_exception_data(
-            cls.__name__,
-            [
-                {"type": detail["type"], "loc": detail["loc"], "input": "[redacted]", "ctx": detail.get("ctx", {})}
-                for detail in details
-            ],
-            hide_input=True,
-        )
-
-    @field_validator("region_id", "bucket_name", "region", "access_key_id", "secret_access_key", mode="before")
-    @classmethod
-    def _reject_blank(cls, value: object) -> object:
-        plaintext = value.get_secret_value() if isinstance(value, SecretStr) else value
-        if isinstance(plaintext, str) and not plaintext.strip():
-            raise ValueError("must not be blank")
-        return value
-
-    @field_validator("session_token", mode="before")
-    @classmethod
-    def _empty_session_token(cls, value: object) -> object:
-        plaintext = value.get_secret_value() if isinstance(value, SecretStr) else value
-        return None if isinstance(plaintext, str) and not plaintext.strip() else value
-
-    @field_validator("endpoint_url")
-    @classmethod
-    def _validate_endpoint(cls, value: str) -> str:
-        message = "endpoint_url must be HTTPS without userinfo, query, or fragment"
-        if any(char.isspace() or ord(char) < 32 for char in value) or any(char in value for char in "\\?#"):
-            raise ValueError(message)
-        try:
-            parsed = urlsplit(value)
-            valid = parsed.scheme == "https" and bool(parsed.hostname) and parsed.username is None
-            _ = parsed.port
-        except ValueError:
-            valid = False
-        if not valid:
-            raise ValueError(message)
-        return value
-
-
 class DaytonaConfig(BaseModel):
     """Configuration options for initializing the Daytona client.
 
@@ -147,8 +62,6 @@ class DaytonaConfig(BaseModel):
             in a future version.
         target (str | None): Target runner location for the Sandbox. Default region for the organization is used
             if not set here or in the environment variable `DAYTONA_TARGET`.
-        build_context_storage (BuildContextStorageConfig | None): Explicit storage for local Image build contexts.
-            Requires an exact matching target and never falls back to hosted storage.
         connection_pool_maxsize (int | None): Maximum number of simultaneous HTTP connections
             the SDK will open. Defaults to 250. Set to `None` to remove the limit, which is
             recommended when running many concurrent long-lived operations like `process.exec`.
@@ -172,8 +85,6 @@ class DaytonaConfig(BaseModel):
         ```
     """
 
-    model_config: ClassVar[ConfigDict] = ConfigDict(hide_input_in_errors=True)
-
     api_key: str | None = None
     api_url: str | None = None
     server_url: Annotated[
@@ -184,7 +95,6 @@ class DaytonaConfig(BaseModel):
         ),
     ] = None
     target: str | None = None
-    build_context_storage: BuildContextStorageConfig | None = Field(default=None, repr=False)
     jwt_token: str | None = None
     organization_id: str | None = None
     connection_pool_maxsize: int | None = 250

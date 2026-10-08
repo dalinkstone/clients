@@ -51,7 +51,6 @@ from .._utils.stream import process_streaming_response
 from .._utils.timeout import http_timeout, with_timeout
 from ..common.daytona import (
     CODE_TOOLBOX_LANGUAGE_LABEL,
-    BuildContextStorageConfig,
     CodeLanguage,
     CreateSandboxFromImageParams,
     CreateSandboxFromSnapshotParams,
@@ -196,7 +195,6 @@ class AsyncDaytona:
 
         default_api_url = "https://app.daytona.io/api"
         self.default_language: CodeLanguage = CodeLanguage.PYTHON
-        self._build_context_storage: BuildContextStorageConfig | None = config.build_context_storage if config else None
         api_url = None
 
         if config:
@@ -334,8 +332,6 @@ class AsyncDaytona:
             self._object_storage_api,
             self._target,
             self._shared_session,
-            build_context_storage=self._build_context_storage,
-            organization_id=self._organization_id,
         )
         self.secret: AsyncSecretService = AsyncSecretService(SecretApi(self._api_client))
         self.warm_pool: AsyncWarmPoolService = AsyncWarmPoolService(WarmPoolsApi(self._api_client))
@@ -684,11 +680,7 @@ class AsyncDaytona:
                 )
             else:
                 context_hashes = await AsyncSnapshotService.process_image_context(
-                    self._object_storage_api,
-                    params.image,
-                    build_context_storage=self._build_context_storage,
-                    region_id=target,
-                    organization_id=self._organization_id,
+                    self._object_storage_api, params.image
                 )
                 sandbox_data.build_info = CreateBuildInfo(
                     context_hashes=context_hashes,

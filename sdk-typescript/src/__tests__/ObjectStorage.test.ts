@@ -129,39 +129,6 @@ describe('ObjectStorage', () => {
     )
   })
 
-  it('sanitizes customer storage failures before recording them in telemetry', async () => {
-    const { trace } = await import('@opentelemetry/api')
-    const { ObjectStorage } = await import('../ObjectStorage')
-    const span = { setStatus: jest.fn(), recordException: jest.fn(), end: jest.fn() }
-    const tracerSpy = jest.spyOn(trace, 'getTracer').mockReturnValue({ startSpan: () => span } as never)
-    const filePath = pathe.join(tempDir, 'context.txt')
-    await fs.promises.writeFile(filePath, 'context')
-    mockSend.mockRejectedValueOnce(new Error('S3 error with customer-secret-marker'))
-    const storage = new ObjectStorage(
-      {
-        endpointUrl: 'https://s3.us-east-1.amazonaws.com',
-        bucketName: 'customer-contexts',
-        region: 'us-east-1',
-        accessKeyId: 'customer-key',
-        secretAccessKey: 'customer-secret-marker',
-      },
-      true,
-    )
-
-    try {
-      await expect(storage.upload(filePath, 'org-1', 'context.txt')).rejects.toThrow(
-        /^Failed to upload build context to configured object storage$/,
-      )
-      expect(span.recordException).toHaveBeenCalledTimes(1)
-      const recorded = span.recordException.mock.calls[0][0] as Error
-      expect(recorded.message).toBe('Failed to upload build context to configured object storage')
-      expect(recorded.cause).toBeUndefined()
-      expect(JSON.stringify(span.setStatus.mock.calls)).not.toContain('customer-secret-marker')
-    } finally {
-      tracerSpy.mockRestore()
-    }
-  })
-
   it('returns the existing hash without re-uploading when the prefix already exists', async () => {
     const filePath = pathe.join(tempDir, 'a.txt')
     await fs.promises.writeFile(filePath, 'hello')

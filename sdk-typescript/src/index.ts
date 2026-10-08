@@ -89,7 +89,7 @@ export { Sandbox } from './Sandbox'
 export type { ListSandboxesQuery, SandboxMetrics } from './Sandbox'
 export type { Secret, CreateSecretParams, UpdateSecretParams, ListSecretsQuery, ListSecretsResponse } from './Secret'
 export type {
-  BuildContextStorageConfig,
+  BuildContextUploadAccessProvider,
   CreateSnapshotParams,
   ListSnapshotsQuery,
   PaginatedSnapshots,

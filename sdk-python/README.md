@@ -51,52 +51,6 @@ sandbox = daytona.create()
 response = sandbox.process.code_run('print("Hello World")')
 ```
 
-### Use your own build-context bucket
-
-For local files added to an `Image`, configure an S3-compatible bucket that matches
-the build-context storage configured on the runners for your exact Daytona target:
-
-```python
-from daytona import BuildContextStorageConfig, CreateSandboxFromImageParams, Daytona, DaytonaConfig, Image
-
-daytona = Daytona(DaytonaConfig(
-    api_key="YOUR_DAYTONA_API_KEY",
-    target="YOUR_DAYTONA_REGION_ID",
-    build_context_storage=BuildContextStorageConfig(
-        region_id="YOUR_DAYTONA_REGION_ID",  # Exact Daytona target, not the AWS region
-        organization_id="YOUR_ORGANIZATION_ID",
-        endpoint_url="https://s3.example.com",
-        bucket_name="your-build-context-bucket",
-        region="us-east-1",  # AWS signing region
-        access_key_id="YOUR_STORAGE_ACCESS_KEY_ID",
-        secret_access_key="YOUR_STORAGE_SECRET_ACCESS_KEY",
-        # session_token="YOUR_OPTIONAL_SESSION_TOKEN",
-    ),
-))
-sandbox = daytona.create(CreateSandboxFromImageParams(
-    image=Image.base("python:3.12").add_local_dir("./src", "/app"),
-))
-```
-
-The same configuration works with `AsyncDaytona` and `daytona.snapshot.create`.
-Set an explicit matching target (or `CreateSnapshotParams.region_id` for a snapshot).
-Uploads use explicit credentials only, not an ambient SDK IAM credential chain;
-runner IAM/IRSA credentials and bucket configuration are separate. Prefer
-short-lived, narrowly scoped credentials (with a session token when required) that
-remain valid for the upload. Grant the SDK
-object HEAD/read and upload/multipart permissions under
-`YOUR_ORGANIZATION_ID/<context-hash>/context.tar`, and grant runners read access to
-that same bucket and prefix. Manage retention/lifecycle rules yourself, keeping
-contexts available for builds that still need them. Configuration, permission, and
-upload failures never fall back to hosted uploads. String images and images without
-local contexts do not initialize storage.
-
-Only context archives move to your bucket. Daytona's control plane still receives
-build metadata, including Dockerfile content and context hashes; storage credentials
-and the storage descriptor are not sent in create requests.
-Snapshot registry/image storage is configured separately; this option only controls
-local build-context archives.
-
 ## Examples and guides
 
 Daytona provides [examples](https://www.daytona.io/docs/en/getting-started/#examples) and [guides](https://www.daytona.io/docs/en/guides/) for common sandbox operations, best practices, and a wide range of topics, from basic usage to advanced topics, showcasing various types of integrations between Daytona and other tools.

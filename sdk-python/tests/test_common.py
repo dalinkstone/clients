@@ -3,9 +3,7 @@
 
 from __future__ import annotations
 
-import json
 import warnings
-from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -65,40 +63,6 @@ class TestDaytonaConfig:
         assert config.api_key == "key123"
         assert config.api_url == "https://api.test.io"
         assert config.target is None
-        assert config.build_context_storage is None
-
-    def test_build_context_storage_root_export_and_redaction(self, build_context_storage):
-        import daytona
-        from daytona._sync.snapshot import SnapshotService
-        from daytona.common.daytona import BuildContextStorageConfig
-
-        assert daytona.BuildContextStorageConfig is BuildContextStorageConfig
-        assert "BuildContextStorageConfig" in daytona.__all__
-        config = DaytonaConfig(target="us", build_context_storage=build_context_storage)
-        assert config.build_context_storage is build_context_storage
-        restored = DaytonaConfig.model_validate(config.model_dump())
-        assert restored.build_context_storage == build_context_storage
-        assert restored.build_context_storage.access_key_id == build_context_storage.access_key_id
-        assert json.loads(config.model_dump_json())["build_context_storage"]["secret_access_key"] == "**********"
-        api = MagicMock()
-        image = Image.base("python:3.12")
-        image._context_list = [MagicMock(source_path="/tmp/ctx", archive_path="context")]
-        with patch("daytona._sync.snapshot.ObjectStorage") as storage_cls:
-            storage_cls.return_value.upload.return_value = "context-hash"
-            assert SnapshotService.process_image_context(
-                api, image, build_context_storage=restored.build_context_storage, region_id=restored.target
-            ) == ["context-hash"]
-        api.get_push_access.assert_not_called()
-        for rendered in (
-            str(config),
-            repr(config),
-            repr(build_context_storage),
-            str(config.model_dump()),
-            config.model_dump_json(),
-            build_context_storage.model_dump_json(),
-        ):
-            for secret in ("storage-access-value", "storage-secret-value", "storage-session-value"):
-                assert secret not in rendered
 
     def test_config_with_all_fields(self):
         config = DaytonaConfig(

@@ -44,50 +44,38 @@ const daytona = new Daytona({
 });
 ```
 
-### Use your own build-context bucket
+### Customer-owned build-context storage
 
-For local files added to an `Image`, configure an S3-compatible bucket that matches
-the build-context storage configured on the runners for your exact Daytona target:
+Set `getBuildContextUploadAccess` to supply your own upload access for local files
+in an `Image`, instead of calling Daytona's hosted push-access endpoint:
 
 ```typescript
-import { Daytona, Image } from '@daytona/sdk'
-
+const target = 'YOUR_CUSTOM_REGION_ID'
 const daytona = new Daytona({
   apiKey: 'YOUR_DAYTONA_API_KEY',
-  target: 'YOUR_DAYTONA_REGION_ID',
-  buildContextStorage: {
-    regionId: 'YOUR_DAYTONA_REGION_ID', // Exact Daytona target, not the AWS region
-    organizationId: 'YOUR_ORGANIZATION_ID',
-    endpointUrl: 'https://s3.us-east-1.amazonaws.com',
-    bucketName: 'your-build-context-bucket',
-    region: 'us-east-1', // AWS signing region
-    accessKeyId: 'YOUR_STORAGE_ACCESS_KEY_ID',
-    secretAccessKey: 'YOUR_STORAGE_SECRET_ACCESS_KEY',
-    // sessionToken: 'YOUR_OPTIONAL_SESSION_TOKEN',
+  target,
+  getBuildContextUploadAccess: async (regionId) => {
+    if (regionId !== target) throw new Error('Unexpected build region')
+    return {
+      storageUrl: 'https://s3.us-east-1.amazonaws.com',
+      bucket: 'your-build-context-bucket',
+      region: 'us-east-1',
+      organizationId: 'YOUR_ORGANIZATION_ID',
+      accessKey: process.env.AWS_ACCESS_KEY_ID!,
+      secret: process.env.AWS_SECRET_ACCESS_KEY!,
+      sessionToken: process.env.AWS_SESSION_TOKEN || '',
+    }
   },
-})
-
-await daytona.snapshot.create({
-  name: 'customer-image-v1',
-  image: Image.base('node:24-bookworm-slim').addLocalDir('./src', '/app'),
 })
 ```
 
-The same configuration applies to `daytona.create` with an `Image`. Set an explicit
-matching target (or `regionId` for a snapshot). Credentials are supplied explicitly;
-runner IAM/IRSA credentials and bucket configuration are separate. Prefer scoped,
-short-lived credentials that remain valid for the whole upload. Grant the SDK
-prefix-restricted list and upload/multipart permissions, and grant runners read
-access to `YOUR_ORGANIZATION_ID/<context-hash>/context.tar` in that bucket. Manage
-retention/lifecycle rules yourself, keeping contexts available for builds that
-still need them. Configuration, permission, and upload failures never fall back to
-hosted uploads. String images and images without local contexts do not initialize
-storage.
-
-Only context archives move to your bucket. Daytona's control plane still receives
-build metadata, including Dockerfile content and context hashes; storage credentials
-and the storage descriptor are not sent in create requests. Snapshot image storage
-is configured separately through your region's registry.
+This applies to both `daytona.snapshot.create` and `daytona.create` with an `Image`.
+An explicit target is required when uploading local contexts. The provider must
+return the bucket and organization prefix that the selected region's runners
+read; SDK upload credentials are independent of runner IRSA. Supply scoped
+credentials valid for the upload and retain contexts for pending builds/rebuilds.
+Provider or upload failures never fall back to hosted storage. Daytona still
+receives Dockerfile content and context hashes; image/registry storage is separate.
 
 ## Create a sandbox
 
