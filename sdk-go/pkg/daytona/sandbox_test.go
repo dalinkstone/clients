@@ -356,6 +356,41 @@ func TestSandboxResizeTimeoutValidation(t *testing.T) {
 	os.Clearenv()
 }
 
+func TestSandboxSetPublic(t *testing.T) {
+	requests := make(chan string, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests <- r.Method + " " + r.URL.Path
+		payload := testSandboxPayload("test-id", "test", apiclient.SANDBOXSTATE_STARTED)
+		payload["public"] = true
+		writeJSONResponse(t, w, http.StatusOK, payload)
+	}))
+	defer server.Close()
+
+	client := createTestClientWithServer(t, server)
+	sandbox := newSandboxForTest(client, "test-id", "test", apiclient.SANDBOXSTATE_STARTED, "us-east-1", 60, -1, false, nil)
+
+	require.NoError(t, sandbox.doSetPublic(context.Background(), true))
+	assert.Equal(t, "POST /sandbox/test-id/public/true", <-requests)
+	assert.True(t, sandbox.Public)
+
+	os.Clearenv()
+}
+
+func TestSandboxSetPublicAPIError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeJSONResponse(t, w, http.StatusForbidden, map[string]string{"message": "forbidden"})
+	}))
+	defer server.Close()
+
+	client := createTestClientWithServer(t, server)
+	sandbox := newSandboxForTest(client, "test-id", "test", apiclient.SANDBOXSTATE_STARTED, "us-east-1", 60, -1, false, nil)
+
+	require.Error(t, sandbox.doSetPublic(context.Background(), true))
+	assert.False(t, sandbox.Public)
+
+	os.Clearenv()
+}
+
 func TestSandboxStartAPIError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
