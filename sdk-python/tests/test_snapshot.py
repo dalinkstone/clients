@@ -3,13 +3,17 @@
 
 from __future__ import annotations
 
+import hashlib
+import io
+import tarfile
+from datetime import timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from daytona.common.errors import DaytonaError
+from daytona.common.errors import DaytonaError, DaytonaValidationError
 from daytona.common.image import Image
-from daytona.common.snapshot import Snapshot
+from daytona.common.snapshot import CreateSnapshotParams, Snapshot
 
 
 class TestSyncSnapshotService:
@@ -203,6 +207,7 @@ class TestSyncSnapshotService:
 
             assert service.process_image_context(object_storage_api, image) == ["ctx-hash"]
             assert mock_storage_cls.call_args.kwargs["region"] == "us-east-2"
+            assert "sanitize_errors" not in mock_storage_cls.call_args.kwargs
 
 
 class TestAsyncSnapshotService:
@@ -405,3 +410,202 @@ class TestAsyncSnapshotService:
 
             assert await service.process_image_context(object_storage_api, image) == ["ctx-hash"]
             assert mock_storage_cls.call_args.kwargs["region"] == "us-east-2"
+            assert "sanitize_errors" not in mock_storage_cls.call_args.kwargs
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("is_async", [False, True], ids=["sync", "async"])
+class TestBuildContextStorage:
+    async def test_constructor_error_has_no_context_or_telemetry_secret(
+        self, is_async, build_context_storage, span_exporter
+    ):
+        service, api, storage_api = self._make_service(is_async, build_context_storage)
+        image = Image.base("python:3.12")
+        image._context_list = [MagicMock(source_path="/tmp/ctx", archive_path="context")]
+        module = "daytona._async.object_storage" if is_async else "daytona._sync.object_storage"
+        with patch(f"{module}.S3Store", side_effect=ValueError("constructor-credential-marker")):
+            with pytest.raises(DaytonaError) as caught:
+                response = service.process_image_context(
+                    storage_api, image, build_context_storage=build_context_storage, region_id="us"
+                )
+                if is_async:
+                    await response
+        assert caught.value.__context__ is None
+        assert caught.value.__cause__ is None
+        spans = span_exporter.get_finished_spans()
+        assert spans
+        assert all("constructor-credential-marker" not in span.to_json() for span in spans)
+        storage_api.get_push_access.assert_not_called()
+        api.create_snapshot.assert_not_called()
+
+    def _make_service(self, is_async, config, default_region_id="us", organization_id=None):
+        from daytona._async.snapshot import AsyncSnapshotService
+        from daytona._sync.snapshot import SnapshotService
+
+        cls = AsyncSnapshotService if is_async else SnapshotService
+        mock_cls = AsyncMock if is_async else MagicMock
+        api, storage_api = mock_cls(), mock_cls()
+        api.create_snapshot.return_value = Snapshot.model_validate(
+            TestSyncSnapshotService()._make_snapshot_dto().model_dump()
+        )
+        service = cls(
+            api,
+            storage_api,
+            default_region_id,
+            build_context_storage=config,
+            organization_id=organization_id,
+        )
+        return service, api, storage_api
+
+    @pytest.mark.parametrize("override", [False, True], ids=["default-target", "snapshot-target"])
+    async def test_create_uploads_custom_contexts_before_metadata(
+        self, is_async, override, build_context_storage, tmp_path
+    ):
+        if override:
+            build_context_storage = build_context_storage.model_copy(update={"session_token": None})
+        service, api, storage_api = self._make_service(
+            is_async, build_context_storage, default_region_id="eu" if override else "us"
+        )
+        image = Image.base("python:3.12")
+        contents = [b"first", b"second"]
+        for index, content in enumerate(contents):
+            path = tmp_path / f"file-{index}.txt"
+            path.write_bytes(content)
+            image.add_local_file(str(path), f"/app/file-{index}.txt")
+        hashes = [
+            hashlib.md5(context.archive_path.encode() + content).hexdigest()
+            for context, content in zip(image._context_list, contents)
+        ]
+        keys = [f"org-1/{context_hash}/context.tar" for context_hash in hashes]
+        captured, events = {}, []
+        store = MagicMock()
+
+        def head(key):
+            events.append(("head", key))
+            raise FileNotFoundError()
+
+        def consume(key, chunks, **_kwargs):
+            captured[key] = b"".join(chunks)
+            events.append(("put", key))
+
+        async def consume_async(key, chunks, **_kwargs):
+            captured[key] = b"".join([chunk async for chunk in chunks])
+            events.append(("put", key))
+
+        if is_async:
+            store.head_async = AsyncMock(side_effect=head)
+            store.put_async = AsyncMock(side_effect=consume_async)
+        else:
+            store.head.side_effect = head
+            store.put.side_effect = consume
+        result = api.create_snapshot.return_value
+
+        def create(_request):
+            events.append(("create", None))
+            return result
+
+        api.create_snapshot.side_effect = create
+        module = "daytona._async.object_storage" if is_async else "daytona._sync.object_storage"
+        params = CreateSnapshotParams(name="test-snapshot", image=image, region_id="us" if override else None)
+        with patch(f"{module}.S3Store", return_value=store) as store_cls:
+            response = service.create(params)
+            if is_async:
+                response = await response
+        assert response is result
+        storage_api.get_push_access.assert_not_called()
+        store_cls.assert_called_once_with(
+            bucket="build-contexts",
+            endpoint="https://s3.example.com",
+            region="us-east-2",
+            access_key_id="storage-access-value",
+            secret_access_key="storage-secret-value",
+            **({"session_token": "storage-session-value"} if not override else {}),
+            client_options={"timeout": timedelta(minutes=2)},
+            retry_config={"retry_timeout": timedelta(minutes=4)},
+        )
+        assert events == [(operation, key) for key in keys for operation in ("head", "put")] + [("create", None)]
+        for key, context, content in zip(keys, image._context_list, contents):
+            with tarfile.open(fileobj=io.BytesIO(captured[key])) as archive:
+                assert archive.getnames() == [context.archive_path]
+                assert archive.extractfile(context.archive_path).read() == content
+        request = api.create_snapshot.call_args.args[0]
+        assert request.region_id == "us"
+        assert request.build_info.context_hashes == hashes
+        assert request.build_info.dockerfile_content == image.dockerfile()
+        for value in (
+            "storage-access-value",
+            "storage-secret-value",
+            "storage-session-value",
+            "s3.example.com",
+            "build-contexts",
+        ):
+            assert value not in request.model_dump_json()
+
+    @pytest.mark.parametrize(
+        "update",
+        [{"endpoint_url": "http://s3.example.com"}, {"bucket_name": " "}, {"organization_id": "../org"}],
+        ids=["unsafe-endpoint", "blank-bucket", "unsafe-org-prefix"],
+    )
+    async def test_copied_descriptor_is_revalidated_before_storage(self, is_async, update, build_context_storage):
+        from daytona._utils.errors import is_validation_error
+
+        config = build_context_storage.model_copy(update=update)
+        service, api, storage_api = self._make_service(is_async, config)
+        image = Image.base("python:3.12")
+        image._context_list = [MagicMock(source_path="/tmp/ctx", archive_path="context")]
+        cls_path = "daytona._async.snapshot.AsyncObjectStorage" if is_async else "daytona._sync.snapshot.ObjectStorage"
+        with patch(cls_path) as storage_cls:
+            with pytest.raises(DaytonaError) as caught:
+                response = service.create(CreateSnapshotParams(name="test-snapshot", image=image))
+                if is_async:
+                    await response
+            assert is_validation_error(caught.value)
+            storage_cls.assert_not_called()
+        storage_api.get_push_access.assert_not_called()
+        api.create_snapshot.assert_not_called()
+
+    @pytest.mark.parametrize("failure", ["absent-target", "different-target", "different-org", "init", "upload"])
+    async def test_create_fails_closed(self, is_async, failure, build_context_storage):
+        service, api, storage_api = self._make_service(
+            is_async,
+            build_context_storage,
+            default_region_id=None if failure == "absent-target" else "us",
+            organization_id="other-org" if failure == "different-org" else None,
+        )
+        image = Image.base("python:3.12")
+        image._context_list = [MagicMock(source_path="/tmp/ctx", archive_path="context")]
+        params = CreateSnapshotParams(
+            name="test-snapshot", image=image, region_id="eu" if failure == "different-target" else None
+        )
+        cls_path = "daytona._async.snapshot.AsyncObjectStorage" if is_async else "daytona._sync.snapshot.ObjectStorage"
+        binding_failure = failure not in ("init", "upload")
+        error_cls = DaytonaValidationError if binding_failure else DaytonaError
+        with patch(cls_path) as storage_cls:
+            if failure == "init":
+                storage_cls.side_effect = ValueError("storage-secret-value")
+            storage_cls.return_value.upload = (AsyncMock if is_async else MagicMock)(
+                side_effect=PermissionError("storage-secret-value")
+            )
+            with pytest.raises(error_cls) as caught:
+                response = service.create(params)
+                if is_async:
+                    await response
+            if binding_failure:
+                storage_cls.assert_not_called()
+            else:
+                assert "configured object storage" in str(caught.value)
+            assert "storage-secret-value" not in str(caught.value)
+        storage_api.get_push_access.assert_not_called()
+        api.create_snapshot.assert_not_called()
+
+    @pytest.mark.parametrize("image", ["python:3.12", Image.base("python:3.12")], ids=["string", "empty-context"])
+    async def test_no_context_does_not_initialize_storage(self, is_async, image, build_context_storage):
+        service, api, storage_api = self._make_service(is_async, build_context_storage, default_region_id=None)
+        cls_path = "daytona._async.snapshot.AsyncObjectStorage" if is_async else "daytona._sync.snapshot.ObjectStorage"
+        with patch(cls_path) as storage_cls:
+            response = service.create(CreateSnapshotParams(name="test-snapshot", image=image))
+            if is_async:
+                await response
+        storage_cls.assert_not_called()
+        storage_api.get_push_access.assert_not_called()
+        api.create_snapshot.assert_called_once()

@@ -629,7 +629,7 @@ describe('Daytona', () => {
     const image = Image.base('python:3.12').runCommands('echo hi')
     await instance.create({ image, resources: { cpu: 2, memory: 4 } })
 
-    expect(mockProcessImageContext).toHaveBeenCalledWith(mockObjectStorageApi, image)
+    expect(mockProcessImageContext).toHaveBeenCalledWith(mockObjectStorageApi, image, undefined, 'us', undefined)
     expect(mockSandboxApi.createSandbox).toHaveBeenCalledWith(
       expect.objectContaining({
         buildInfo: expect.objectContaining({
@@ -658,6 +658,64 @@ describe('Daytona', () => {
     const sandboxResults = (Sandbox as jest.Mock).mock.results
     const createdSandbox = sandboxResults[sandboxResults.length - 1].value as { waitUntilStarted: jest.Mock }
     expect(createdSandbox.waitUntilStarted).toHaveBeenCalled()
+  })
+
+  it('passes customer storage to both build paths without including it in API configuration or metadata', async () => {
+    const { Daytona } = await import('../Daytona')
+    const { Image } = await import('../Image')
+    const storage = {
+      regionId: 'customer-region',
+      organizationId: 'org-1',
+      endpointUrl: 'https://s3.us-east-1.amazonaws.com',
+      bucketName: 'customer-contexts',
+      region: 'us-east-1',
+      accessKeyId: 'customer-key',
+      secretAccessKey: 'customer-secret',
+    }
+    const instance = new Daytona({
+      apiKey: 'daytona-key',
+      apiUrl: 'https://api.example.com',
+      target: storage.regionId,
+      buildContextStorage: storage,
+    })
+    const originalStorage = { ...storage }
+    storage.endpointUrl = 'http://changed.example.com'
+    storage.bucketName = 'changed-bucket'
+    mockProcessImageContext.mockResolvedValue(['customer-hash'])
+    mockSandboxApi.createSandbox.mockResolvedValue(
+      createApiResponse({ id: 'sb-1', state: 'started', labels: { 'code-toolbox-language': 'python' } }),
+    )
+    const image = Image.base('node:24-bookworm-slim')
+
+    await instance.create({ image })
+
+    expect(mockSnapshotServiceCtor).toHaveBeenCalledWith(
+      expect.anything(),
+      mockSnapshotsApi,
+      mockObjectStorageApi,
+      storage.regionId,
+      originalStorage,
+      undefined,
+    )
+    expect(mockProcessImageContext).toHaveBeenCalledWith(
+      mockObjectStorageApi,
+      image,
+      originalStorage,
+      storage.regionId,
+      undefined,
+    )
+    expect(mockSandboxApi.createSandbox).toHaveBeenCalledWith(
+      expect.objectContaining({
+        target: storage.regionId,
+        buildInfo: { dockerfileContent: image.dockerfile, contextHashes: ['customer-hash'] },
+      }),
+      undefined,
+      { timeout: 60000 },
+    )
+    const requests = JSON.stringify([mockConfigurationCtor.mock.calls, mockSandboxApi.createSandbox.mock.calls])
+    expect(requests).not.toContain(storage.secretAccessKey)
+    expect(requests).not.toContain(originalStorage.bucketName)
+    expect(requests).not.toContain('buildContextStorage')
   })
 
   it('wraps DaytonaTimeoutError from sandbox startup in create', async () => {

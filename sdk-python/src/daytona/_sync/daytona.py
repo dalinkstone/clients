@@ -39,6 +39,7 @@ from .._utils.stream import process_streaming_response
 from .._utils.timeout import http_timeout, with_timeout
 from ..common.daytona import (
     CODE_TOOLBOX_LANGUAGE_LABEL,
+    BuildContextStorageConfig,
     CodeLanguage,
     CreateSandboxFromImageParams,
     CreateSandboxFromSnapshotParams,
@@ -147,6 +148,7 @@ class Daytona:
 
         default_api_url = "https://app.daytona.io/api"
         self.default_language: CodeLanguage = CodeLanguage.PYTHON
+        self._build_context_storage: BuildContextStorageConfig | None = config.build_context_storage if config else None
         api_url = None
 
         if config:
@@ -265,7 +267,11 @@ class Daytona:
         # Initialize services
         self.volume: VolumeService = VolumeService(VolumesApi(self._api_client))
         self.snapshot: SnapshotService = SnapshotService(
-            SnapshotsApi(self._api_client), self._object_storage_api, self._target
+            SnapshotsApi(self._api_client),
+            self._object_storage_api,
+            self._target,
+            build_context_storage=self._build_context_storage,
+            organization_id=self._organization_id,
         )
         self.secret: SecretService = SecretService(SecretApi(self._api_client))
         self.warm_pool: WarmPoolService = WarmPoolService(WarmPoolsApi(self._api_client))
@@ -548,7 +554,13 @@ class Daytona:
                     dockerfile_content=Image.base(params.image).dockerfile(),
                 )
             else:
-                context_hashes = SnapshotService.process_image_context(self._object_storage_api, params.image)
+                context_hashes = SnapshotService.process_image_context(
+                    self._object_storage_api,
+                    params.image,
+                    build_context_storage=self._build_context_storage,
+                    region_id=target,
+                    organization_id=self._organization_id,
+                )
                 sandbox_data.build_info = CreateBuildInfo(
                     context_hashes=context_hashes,
                     dockerfile_content=params.image.dockerfile(),

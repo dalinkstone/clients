@@ -40,6 +40,7 @@ if TYPE_CHECKING:
     from .common.code_interpreter import ExecutionError, ExecutionResult, OutputMessage
     from .common.computer_use import ScreenshotOptions, ScreenshotRegion
     from .common.daytona import (
+        BuildContextStorageConfig,
         CodeLanguage,
         CreateSandboxBaseParams,
         CreateSandboxFromImageParams,
@@ -110,6 +111,7 @@ if TYPE_CHECKING:
 __all__ = [
     "Daytona",
     "DaytonaConfig",
+    "BuildContextStorageConfig",
     "CodeLanguage",
     "SessionExecuteRequest",
     "SessionExecuteResponse",
@@ -252,6 +254,7 @@ _DYNAMIC_IMPORTS: dict[str, str] = {
     "ScreenshotOptions": "common.computer_use",
     "ScreenshotRegion": "common.computer_use",
     # common.daytona
+    "BuildContextStorageConfig": "common.daytona",
     "CodeLanguage": "common.daytona",
     "CreateSandboxBaseParams": "common.daytona",
     "CreateSandboxFromImageParams": "common.daytona",

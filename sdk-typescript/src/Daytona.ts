@@ -32,6 +32,7 @@ import { Sandbox } from './Sandbox'
 import type { ListSandboxesQuery } from './Sandbox'
 import { SecretService } from './Secret'
 import { SnapshotService } from './Snapshot'
+import type { BuildContextStorageConfig } from './Snapshot'
 import { VolumeService } from './Volume'
 import { WarmPoolService } from './WarmPool'
 import { getPackageInfo, dynamicRequire } from './utils/Import'
@@ -109,6 +110,8 @@ export interface DaytonaConfig {
   serverUrl?: string
   /** Target environment for sandboxes */
   target?: string
+  /** Explicit storage for local Image build contexts. Requires a matching target and never falls back to hosted storage. */
+  buildContextStorage?: BuildContextStorageConfig
   /** Enable OpenTelemetry tracing for SDK operations. */
   otelEnabled?: boolean
   /**
@@ -320,6 +323,7 @@ export class Daytona implements AsyncDisposable {
     return this.analyticsApiUrlPromise
   }
   private readonly target?: string
+  private readonly buildContextStorage?: BuildContextStorageConfig
   private readonly apiKey?: string
   private readonly jwtToken?: string
   private readonly organizationId?: string
@@ -342,6 +346,7 @@ export class Daytona implements AsyncDisposable {
    */
   constructor(config?: DaytonaConfig) {
     let apiUrl: string | undefined
+    this.buildContextStorage = config?.buildContextStorage !== undefined ? { ...config.buildContextStorage } : undefined
     const endpointGivenByCaller = Boolean(config?.apiUrl || config?.serverUrl)
     if (config) {
       this.apiKey = !config?.apiKey && config?.jwtToken ? undefined : config?.apiKey
@@ -461,6 +466,8 @@ export class Daytona implements AsyncDisposable {
       new SnapshotsApi(configuration, '', axiosInstance),
       this.objectStorageApi,
       this.target,
+      this.buildContextStorage,
+      this.organizationId,
     )
     this.clientConfig = configuration
 
@@ -705,7 +712,13 @@ export class Daytona implements AsyncDisposable {
             dockerfileContent: Image.base(params.image).dockerfile,
           }
         } else if (params.image instanceof Image) {
-          const contextHashes = await SnapshotService.processImageContext(this.objectStorageApi, params.image)
+          const contextHashes = await SnapshotService.processImageContext(
+            this.objectStorageApi,
+            params.image,
+            this.buildContextStorage,
+            this.target,
+            this.organizationId,
+          )
           buildInfo = {
             contextHashes,
             dockerfileContent: params.image.dockerfile,

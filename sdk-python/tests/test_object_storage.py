@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from datetime import timedelta
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -23,6 +23,62 @@ def _make_storage():
 
 
 class TestObjectStorage:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("is_async", [False, True], ids=["sync", "async"])
+    @pytest.mark.parametrize("sanitize_errors", [False, True], ids=["hosted", "custom"])
+    async def test_upload_sanitizes_before_telemetry(self, is_async, sanitize_errors, span_exporter, tmp_path):
+        from daytona._async.object_storage import AsyncObjectStorage
+        from daytona._sync.object_storage import ObjectStorage
+        from daytona.common.errors import DaytonaError
+
+        cls = AsyncObjectStorage if is_async else ObjectStorage
+        path = tmp_path / "context.txt"
+        path.write_text("context", encoding="utf-8")
+        original = PermissionError("backend-credential-marker")
+        store = MagicMock()
+        if is_async:
+            store.head_async = AsyncMock(side_effect=original)
+        else:
+            store.head.side_effect = original
+        with patch(f"{cls.__module__}.S3Store", return_value=store):
+            storage = cls(
+                "https://s3.example.com",
+                "key",
+                "secret",
+                None,
+                "bucket",
+                region="us-east-2",
+                sanitize_errors=sanitize_errors,
+            )
+        with pytest.raises(DaytonaError if sanitize_errors else PermissionError) as caught:
+            response = storage.upload(str(path), "org-1")
+            if is_async:
+                await response
+        spans = span_exporter.get_finished_spans()
+        assert len(spans) == 1
+        assert spans[0].events
+        if sanitize_errors:
+            assert caught.value.__context__ is None
+            assert caught.value.__cause__ is None
+            assert "backend-credential-marker" not in str(caught.value)
+            assert "backend-credential-marker" not in spans[0].to_json()
+        else:
+            assert caught.value is original
+            assert "backend-credential-marker" in spans[0].to_json()
+
+    @pytest.mark.parametrize("is_async", [False, True], ids=["sync", "async"])
+    @pytest.mark.parametrize("token", [None, ""])
+    def test_constructor_omits_absent_session_token(self, is_async, token):
+        from daytona._async.object_storage import AsyncObjectStorage
+        from daytona._sync.object_storage import ObjectStorage
+
+        cls = AsyncObjectStorage if is_async else ObjectStorage
+        with patch(f"{cls.__module__}.S3Store") as mock_store_cls:
+            cls("https://s3.example.com", "key", "secret", token, "bucket", region="us-east-2")
+        assert "session_token" not in mock_store_cls.call_args.kwargs
+        assert mock_store_cls.call_args.kwargs["access_key_id"] == "key"
+        assert mock_store_cls.call_args.kwargs["secret_access_key"] == "secret"
+
     def test_constructor_configures_store(self):
         from daytona._sync.object_storage import ObjectStorage
 
@@ -30,6 +86,7 @@ class TestObjectStorage:
             ObjectStorage("https://s3.us-west-2.amazonaws.com", "key", "secret", "token", region="ap-south-1")
 
         assert mock_store_cls.call_args.kwargs["region"] == "ap-south-1"
+        assert mock_store_cls.call_args.kwargs["session_token"] == "token"
         assert mock_store_cls.call_args.kwargs["client_options"]["timeout"] == timedelta(minutes=2)
         assert mock_store_cls.call_args.kwargs["retry_config"]["retry_timeout"] == timedelta(minutes=4)
 

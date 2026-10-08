@@ -4,18 +4,25 @@
 from __future__ import annotations
 
 import json
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
 from daytona.common.daytona import CreateSandboxFromImageParams, CreateSandboxFromSnapshotParams, DaytonaConfig
 from daytona.common.errors import DaytonaAuthenticationError, DaytonaError, DaytonaValidationError
+from daytona.common.image import Image
 from daytona.common.sandbox import Resources
 from daytona_api_client_async import SandboxState
 
 from .conftest import make_sandbox_dto
 
 ASYNC_MODULE = "daytona._async.daytona"
+
+
+@pytest.fixture(autouse=True)
+def mock_event_dispatcher():
+    with patch(f"{ASYNC_MODULE}.AsyncEventDispatcher", autospec=True):
+        yield
 
 
 def _make_async_daytona(config=None):
@@ -42,6 +49,22 @@ def _make_async_daytona(config=None):
 
 
 class TestAsyncDaytonaInit:
+    def test_build_context_storage_is_passed_to_snapshot_service(self, build_context_storage):
+        with patch(f"{ASYNC_MODULE}.AsyncSnapshotService") as service_cls:
+            _make_async_daytona(
+                DaytonaConfig(
+                    api_key="test-key",
+                    api_url="https://api.test.io",
+                    target="us",
+                    organization_id="org-1",
+                    build_context_storage=build_context_storage,
+                )
+            )
+        assert service_cls.call_args.kwargs == {
+            "build_context_storage": build_context_storage,
+            "organization_id": "org-1",
+        }
+
     def test_init_with_config(self):
         daytona = _make_async_daytona(DaytonaConfig(api_key="test-key", api_url="https://api.test.io", target="us"))
         assert daytona._api_key == "test-key"
@@ -483,6 +506,91 @@ class TestAsyncDaytonaSharedSession:
 
 
 class TestAsyncDaytonaCreateValidation:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("context_mode", ["local", "empty", "string"])
+    async def test_create_with_build_context_storage(self, context_mode, build_context_storage, sandbox_dto):
+        daytona = _make_async_daytona(
+            DaytonaConfig(
+                api_key="test-key",
+                api_url="https://api.test.io",
+                target="us",
+                build_context_storage=build_context_storage,
+            )
+        )
+        daytona._sandbox_api.create_sandbox = AsyncMock(return_value=sandbox_dto)
+        daytona._object_storage_api = AsyncMock()
+        image = Image.base("python:3.12")
+        if context_mode == "local":
+            image._context_list = [
+                MagicMock(source_path="/tmp/first", archive_path="first"),
+                MagicMock(source_path="/tmp/second", archive_path="second"),
+            ]
+        with patch("daytona._async.snapshot.AsyncObjectStorage") as storage_cls:
+            storage_cls.return_value.upload = AsyncMock(side_effect=["first-hash", "second-hash"])
+            await daytona.create(
+                CreateSandboxFromImageParams(image="python:3.12" if context_mode == "string" else image)
+            )
+            if context_mode == "local":
+                storage_cls.assert_called_once_with(
+                    "https://s3.example.com",
+                    "storage-access-value",
+                    "storage-secret-value",
+                    "storage-session-value",
+                    "build-contexts",
+                    region="us-east-2",
+                    sanitize_errors=True,
+                )
+                assert storage_cls.return_value.upload.await_args_list == [
+                    call("/tmp/first", "org-1", "first"),
+                    call("/tmp/second", "org-1", "second"),
+                ]
+            else:
+                storage_cls.assert_not_called()
+        daytona._object_storage_api.get_push_access.assert_not_called()
+        request = daytona._sandbox_api.create_sandbox.call_args.args[0]
+        assert request.target == "us"
+        assert request.build_info.context_hashes == (
+            ["first-hash", "second-hash"] if context_mode == "local" else [] if context_mode == "empty" else None
+        )
+        for value in (
+            "storage-access-value",
+            "storage-secret-value",
+            "storage-session-value",
+            "s3.example.com",
+            "build-contexts",
+        ):
+            assert value not in request.model_dump_json()
+            assert value not in str(daytona._api_client.default_headers)
+            assert value not in str(daytona._toolbox_api_client.default_headers)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("failure", ["absent-target", "different-target", "different-org", "upload"])
+    async def test_custom_context_failure_prevents_create(self, failure, build_context_storage):
+        daytona = _make_async_daytona(
+            DaytonaConfig(
+                api_key=None if failure == "different-org" else "test-key",
+                jwt_token="test-jwt" if failure == "different-org" else None,
+                api_url="https://api.test.io",
+                target="us",
+                organization_id="other-org" if failure == "different-org" else None,
+                build_context_storage=build_context_storage,
+            )
+        )
+        daytona._target = None if failure == "absent-target" else "eu" if failure == "different-target" else "us"
+        daytona._sandbox_api.create_sandbox = AsyncMock()
+        daytona._object_storage_api = AsyncMock()
+        image = Image.base("python:3.12")
+        image._context_list = [MagicMock(source_path="/tmp/ctx", archive_path="context")]
+        with patch("daytona._async.snapshot.AsyncObjectStorage") as storage_cls:
+            storage_cls.return_value.upload = AsyncMock(side_effect=PermissionError("storage-secret-value"))
+            with pytest.raises(DaytonaError if failure == "upload" else DaytonaValidationError) as caught:
+                await daytona.create(CreateSandboxFromImageParams(image=image))
+            assert "storage-secret-value" not in str(caught.value)
+            if failure != "upload":
+                storage_cls.assert_not_called()
+        daytona._object_storage_api.get_push_access.assert_not_called()
+        daytona._sandbox_api.create_sandbox.assert_not_called()
+
     @pytest.mark.asyncio
     async def test_negative_timeout_raises(self, env_with_api_key):
         daytona = _make_async_daytona()

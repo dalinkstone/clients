@@ -5,7 +5,7 @@
 
 import { ObjectStorageApi, SnapshotsApi, SnapshotState, SandboxClass, Configuration } from '@daytona/api-client'
 import type { SnapshotDto, CreateSnapshot, PaginatedSnapshots as PaginatedSnapshotsDto } from '@daytona/api-client'
-import { DaytonaError, DaytonaNotFoundError } from './errors/DaytonaError'
+import { DaytonaError, DaytonaInvalidArgumentError, DaytonaNotFoundError } from './errors/DaytonaError'
 import { Image } from './Image'
 import type { Resources } from './Daytona'
 import { processStreamingResponse } from './utils/Stream'
@@ -66,6 +66,26 @@ export type CreateSnapshotParams = {
   sandboxClass?: SandboxClass
 }
 
+/**
+ * Explicit S3-compatible storage for local Image build contexts.
+ * The bucket must match the build-context storage configured on the target's runners.
+ * Credentials stay in the SDK and are not sent to the Daytona API.
+ */
+export interface BuildContextStorageConfig {
+  /** Exact Daytona target, not the AWS signing region. */
+  regionId: string
+  /** Organization ID used as the object-key prefix. */
+  organizationId: string
+  /** HTTPS S3-compatible endpoint. */
+  endpointUrl: string
+  bucketName: string
+  /** AWS signing region. */
+  region: string
+  accessKeyId: string
+  secretAccessKey: string
+  sessionToken?: string
+}
+
 export interface ListSnapshotsQuery {
   /**
    * Page number for pagination (starting from 1)
@@ -101,6 +121,8 @@ export class SnapshotService {
     private snapshotsApi: SnapshotsApi,
     private objectStorageApi: ObjectStorageApi,
     private defaultRegionId?: string,
+    private buildContextStorage?: BuildContextStorageConfig,
+    private organizationId?: string,
   ) {}
 
   /**
@@ -197,6 +219,7 @@ export class SnapshotService {
     params: CreateSnapshotParams,
     options: { onLogs?: (chunk: string) => void; timeout?: number } = {},
   ): Promise<Snapshot> {
+    const regionId = params.regionId || this.defaultRegionId
     const createSnapshotReq: CreateSnapshot = {
       name: params.name,
     }
@@ -205,7 +228,13 @@ export class SnapshotService {
       createSnapshotReq.imageName = params.image
       createSnapshotReq.entrypoint = params.entrypoint
     } else {
-      const contextHashes = await SnapshotService.processImageContext(this.objectStorageApi, params.image)
+      const contextHashes = await SnapshotService.processImageContext(
+        this.objectStorageApi,
+        params.image,
+        this.buildContextStorage,
+        regionId,
+        this.organizationId,
+      )
       createSnapshotReq.buildInfo = {
         contextHashes,
         dockerfileContent: params.entrypoint
@@ -226,7 +255,7 @@ export class SnapshotService {
       createSnapshotReq.disk = params.resources.disk
     }
 
-    createSnapshotReq.regionId = params.regionId || this.defaultRegionId
+    createSnapshotReq.regionId = regionId
     createSnapshotReq.sandboxClass = params.sandboxClass
 
     let createdSnapshot = (
@@ -353,32 +382,101 @@ export class SnapshotService {
    * @returns {Promise<string[]>} The list of context hashes stored in object storage.
    */
   @WithInstrumentation()
-  static async processImageContext(objectStorageApi: ObjectStorageApi, image: Image): Promise<string[]> {
+  static async processImageContext(
+    objectStorageApi: ObjectStorageApi,
+    image: Image,
+    buildContextStorage?: BuildContextStorageConfig,
+    regionId?: string,
+    organizationId?: string,
+  ): Promise<string[]> {
     if (!image.contextList || !image.contextList.length) {
       return []
     }
 
-    const ObjectStorageModule = await dynamicImport('ObjectStorage', '"processImageContext" is not supported: ')
-    const pushAccessCreds = (await objectStorageApi.getPushAccess()).data
-    const objectStorage = new ObjectStorageModule.ObjectStorage({
-      endpointUrl: pushAccessCreds.storageUrl,
-      accessKeyId: pushAccessCreds.accessKey,
-      secretAccessKey: pushAccessCreds.secret,
-      sessionToken: pushAccessCreds.sessionToken,
-      bucketName: pushAccessCreds.bucket,
-      region: pushAccessCreds.region,
-    })
-
-    const contextHashes = []
-    for (const context of image.contextList) {
-      const contextHash = await objectStorage.upload(
-        context.sourcePath,
-        pushAccessCreds.organizationId,
-        context.archivePath,
-      )
-      contextHashes.push(contextHash)
+    if (buildContextStorage !== undefined) {
+      buildContextStorage = { ...buildContextStorage }
+      for (const field of [
+        'regionId',
+        'organizationId',
+        'endpointUrl',
+        'bucketName',
+        'region',
+        'accessKeyId',
+        'secretAccessKey',
+      ] as const) {
+        if (typeof buildContextStorage?.[field] !== 'string' || !buildContextStorage[field].trim()) {
+          throw new DaytonaInvalidArgumentError(`buildContextStorage.${field} must not be blank`)
+        }
+      }
+      if (!/^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(buildContextStorage.organizationId)) {
+        throw new DaytonaInvalidArgumentError('buildContextStorage.organizationId must be a safe organization prefix')
+      }
+      if (buildContextStorage.sessionToken !== undefined && typeof buildContextStorage.sessionToken !== 'string') {
+        throw new DaytonaInvalidArgumentError('buildContextStorage.sessionToken must be a string')
+      }
+      const endpointMessage = 'buildContextStorage.endpointUrl must be HTTPS without userinfo, query, or fragment'
+      try {
+        const endpoint = new URL(buildContextStorage.endpointUrl)
+        if (
+          endpoint.protocol !== 'https:' ||
+          !endpoint.hostname ||
+          endpoint.username ||
+          endpoint.password ||
+          /[\s\\?#]/.test(buildContextStorage.endpointUrl) ||
+          [...buildContextStorage.endpointUrl].some((character) => character.charCodeAt(0) < 32)
+        ) {
+          throw new Error()
+        }
+      } catch {
+        throw new DaytonaInvalidArgumentError(endpointMessage)
+      }
+      if (!regionId || regionId !== buildContextStorage.regionId) {
+        throw new DaytonaInvalidArgumentError('Build context storage requires an explicit matching Daytona target')
+      }
+      if (organizationId && organizationId !== buildContextStorage.organizationId) {
+        throw new DaytonaInvalidArgumentError('Build context storage organization does not match authentication')
+      }
     }
 
-    return contextHashes
+    try {
+      const ObjectStorageModule = await dynamicImport('ObjectStorage', '"processImageContext" is not supported: ')
+      const access =
+        buildContextStorage !== undefined
+          ? {
+              storageUrl: buildContextStorage.endpointUrl,
+              accessKey: buildContextStorage.accessKeyId,
+              secret: buildContextStorage.secretAccessKey,
+              sessionToken: buildContextStorage.sessionToken?.trim() ? buildContextStorage.sessionToken : undefined,
+              bucket: buildContextStorage.bucketName,
+              region: buildContextStorage.region,
+              organizationId: buildContextStorage.organizationId,
+            }
+          : (await objectStorageApi.getPushAccess()).data
+      const objectStorage = new ObjectStorageModule.ObjectStorage(
+        {
+          endpointUrl: access.storageUrl,
+          accessKeyId: access.accessKey,
+          secretAccessKey: access.secret,
+          sessionToken: access.sessionToken,
+          bucketName: access.bucket,
+          region: access.region,
+        },
+        buildContextStorage !== undefined,
+      )
+
+      const contextHashes = []
+      for (const context of image.contextList) {
+        const contextHash = await objectStorage.upload(context.sourcePath, access.organizationId, context.archivePath)
+        contextHashes.push(contextHash)
+      }
+
+      return contextHashes
+    } catch (error) {
+      if (buildContextStorage !== undefined) {
+        // Storage-library errors can contain raw credential inputs.
+        throw new DaytonaError('Failed to upload build context to configured object storage')
+      }
+      throw error
+    }
   }
 }

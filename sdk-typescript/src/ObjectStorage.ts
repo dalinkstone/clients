@@ -7,7 +7,7 @@ import { ListObjectsV2Command, S3Client } from '@aws-sdk/client-s3'
 import { Upload } from '@aws-sdk/lib-storage'
 import * as crypto from 'crypto'
 import * as pathe from 'pathe'
-import { DaytonaNotFoundError } from './errors/DaytonaError'
+import { DaytonaError, DaytonaNotFoundError } from './errors/DaytonaError'
 import { dynamicImport } from './utils/Import'
 import { WithInstrumentation } from './utils/otel.decorator'
 
@@ -41,7 +41,10 @@ export class ObjectStorage {
   private bucketName: string
   private s3Client: S3Client
 
-  constructor(config: ObjectStorageConfig) {
+  constructor(
+    config: ObjectStorageConfig,
+    private readonly sanitizeErrors = false,
+  ) {
     this.bucketName = config.bucketName || 'daytona-volume-builds'
     this.s3Client = new S3Client({
       region: config.region,
@@ -65,29 +68,37 @@ export class ObjectStorage {
    */
   @WithInstrumentation()
   async upload(path: string, organizationId: string, archiveBasePath: string): Promise<string> {
-    const fs = await dynamicImport('fs', '"upload" is not supported: ')
+    try {
+      const fs = await dynamicImport('fs', '"upload" is not supported: ')
 
-    if (!fs.existsSync(path)) {
-      const errMsg = `Path does not exist: ${path}`
-      throw new DaytonaNotFoundError(errMsg)
-    }
+      if (!fs.existsSync(path)) {
+        const errMsg = `Path does not exist: ${path}`
+        throw new DaytonaNotFoundError(errMsg)
+      }
 
-    // Compute hash for the path
-    const pathHash = await this.computeHashForPathMd5(path, archiveBasePath)
+      // Compute hash for the path
+      const pathHash = await this.computeHashForPathMd5(path, archiveBasePath)
 
-    // Define the S3 prefix
-    const prefix = `${organizationId}/${pathHash}/`
-    const s3Key = `${prefix}context.tar`
+      // Define the S3 prefix
+      const prefix = `${organizationId}/${pathHash}/`
+      const s3Key = `${prefix}context.tar`
 
-    // Check if it already exists in S3
-    if (await this.folderExistsInS3(prefix)) {
+      // Check if it already exists in S3
+      if (await this.folderExistsInS3(prefix)) {
+        return pathHash
+      }
+
+      // Upload to S3
+      await this.uploadAsTar(s3Key, path, archiveBasePath)
+
       return pathHash
+    } catch (error) {
+      if (this.sanitizeErrors) {
+        // Sanitize before the instrumentation decorator records the failure.
+        throw new DaytonaError('Failed to upload build context to configured object storage')
+      }
+      throw error
     }
-
-    // Upload to S3
-    await this.uploadAsTar(s3Key, path, archiveBasePath)
-
-    return pathHash
   }
 
   /**
