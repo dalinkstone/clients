@@ -629,7 +629,7 @@ describe('Daytona', () => {
     const image = Image.base('python:3.12').runCommands('echo hi')
     await instance.create({ image, resources: { cpu: 2, memory: 4 } })
 
-    expect(mockProcessImageContext).toHaveBeenCalledWith(mockObjectStorageApi, image, undefined, 'us')
+    expect(mockProcessImageContext).toHaveBeenCalledWith(mockObjectStorageApi, image)
     expect(mockSandboxApi.createSandbox).toHaveBeenCalledWith(
       expect.objectContaining({
         buildInfo: expect.objectContaining({

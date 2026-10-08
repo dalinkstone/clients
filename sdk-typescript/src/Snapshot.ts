@@ -215,12 +215,14 @@ export class SnapshotService {
       createSnapshotReq.imageName = params.image
       createSnapshotReq.entrypoint = params.entrypoint
     } else {
-      const contextHashes = await SnapshotService.processImageContext(
-        this.objectStorageApi,
-        params.image,
-        this.getBuildContextUploadAccess,
-        regionId,
-      )
+      const contextHashes = this.getBuildContextUploadAccess
+        ? await SnapshotService.processImageContext(
+            this.objectStorageApi,
+            params.image,
+            this.getBuildContextUploadAccess,
+            regionId,
+          )
+        : await SnapshotService.processImageContext(this.objectStorageApi, params.image)
       createSnapshotReq.buildInfo = {
         contextHashes,
         dockerfileContent: params.entrypoint

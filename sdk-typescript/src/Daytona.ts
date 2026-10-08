@@ -711,12 +711,14 @@ export class Daytona implements AsyncDisposable {
             dockerfileContent: Image.base(params.image).dockerfile,
           }
         } else if (params.image instanceof Image) {
-          const contextHashes = await SnapshotService.processImageContext(
-            this.objectStorageApi,
-            params.image,
-            this.getBuildContextUploadAccess,
-            this.target,
-          )
+          const contextHashes = this.getBuildContextUploadAccess
+            ? await SnapshotService.processImageContext(
+                this.objectStorageApi,
+                params.image,
+                this.getBuildContextUploadAccess,
+                this.target,
+              )
+            : await SnapshotService.processImageContext(this.objectStorageApi, params.image)
           buildInfo = {
             contextHashes,
             dockerfileContent: params.image.dockerfile,

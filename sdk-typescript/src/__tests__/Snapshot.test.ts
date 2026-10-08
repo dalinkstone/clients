@@ -201,12 +201,9 @@ describe('SnapshotService', () => {
   })
 
   it('returns empty context hashes when an image has no context files', async () => {
-    const getAccess = jest.fn()
     await expect(
-      SnapshotService.processImageContext(objectStorageApi as never, Image.base('python:3.12'), getAccess),
+      SnapshotService.processImageContext(objectStorageApi as never, Image.base('python:3.12')),
     ).resolves.toEqual([])
-    expect(getAccess).not.toHaveBeenCalled()
-    expect(objectStorageApi.getPushAccess).not.toHaveBeenCalled()
   })
 
   it('uploads image contexts through object storage push credentials', async () => {
@@ -234,6 +231,15 @@ describe('SnapshotService', () => {
     expect(objectStorageApi.getPushAccess).toHaveBeenCalledTimes(1)
     expect(ObjectStorage).toHaveBeenCalledWith(expect.objectContaining({ region: 'us-east-2' }))
     expect(upload).toHaveBeenCalledWith('/tmp/context', 'org-1', '.')
+  })
+
+  it('skips custom and hosted upload access for an image without context files', async () => {
+    const getAccess = jest.fn()
+    await expect(
+      SnapshotService.processImageContext(objectStorageApi as never, Image.base('python:3.12'), getAccess),
+    ).resolves.toEqual([])
+    expect(getAccess).not.toHaveBeenCalled()
+    expect(objectStorageApi.getPushAccess).not.toHaveBeenCalled()
   })
 
   it('uses custom upload access for the snapshot region without changing its metadata contract', async () => {
