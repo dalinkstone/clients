@@ -1,0 +1,64 @@
+sdk-python/src/daytona/_sync/snapshot.py
+  s_7098011d922093::t_80b0a6e8510c95 18,279-280,292-293
+hack/python-client/preserve-push-access-options.mjs
+  s_7098011d922093::t_80b0a6e8510c95 1-7,9-10,12-15
+  s_7098011d922093::t_1eef79cd44486b 11
+  s_7098011d922093::t_d4ba873a2074eb 8,16-18
+sdk-python/src/daytona/_async/snapshot.py
+  s_7098011d922093::t_80b0a6e8510c95 19,284-285,297-298
+sdk-typescript/src/ObjectStorage.ts
+  s_7098011d922093::t_80b0a6e8510c95 10-11,93
+sdk-python/src/daytona/_utils/errors.py
+  s_7098011d922093::t_80b0a6e8510c95 82-93
+sdk-python/src/daytona/_sync/object_storage.py
+  s_7098011d922093::t_80b0a6e8510c95 16,96
+sdk-python/README.md
+  s_7098011d922093::t_14beefe3210320 46-47,49,51-52
+sdk-python/tests/test_build_context.py
+  s_7098011d922093::t_4f38edc756e733 273-291,326-334,342-345
+  s_7098011d922093::t_1eef79cd44486b 18-24,216,221,251-252,268-272,292,297,300,323-325,335-341,346-354
+BUILD_CONTEXT_STORAGE.md
+  s_7098011d922093::t_14beefe3210320 33-34,54-57
+sdk-typescript/README.md
+  s_7098011d922093::t_14beefe3210320 52,56-58,83-85
+sdk-python/src/daytona/_async/object_storage.py
+  s_7098011d922093::t_80b0a6e8510c95 18,98
+nx.json
+  s_7098011d922093::t_6213b05ed2a19b 45,56
+hack/ts-client/preserve-push-access-options.mjs
+  s_7098011d922093::t_80b0a6e8510c95 1-24
+hack/ts-client/postprocess.sh
+  s_7098011d922093::t_80b0a6e8510c95 28-31
+sdk-typescript/src/Snapshot.ts
+  s_7098011d922093::t_80b0a6e8510c95 19,397,399,414-415
+hack/python-client/postprocess.sh
+  s_7098011d922093::t_80b0a6e8510c95 55-58
+sdk-typescript/src/__tests__/BuildContext.test.ts
+  s_7098011d922093::t_9700dda760bf96 6-11,18-24,158-162,166-169,175-180,251-254,256-257,260-266,278-288,292-307,309-323,326-332,338-342,354-368,371-376
+  s_7098011d922093::t_73fb1faa7e7146 181
+  s_7098011d922093::t_1eef79cd44486b 12-13,17,149-157,163-165,170-174,182-187,277,289-291,333,335-337,343-353,369-370,377-385
+sdk-typescript/src/utils/BuildContextError.ts
+  s_7098011d922093::t_80b0a6e8510c95 1-17
+api-client-python-async/daytona_api_client_async/api/object_storage_api.py
+  s_7098011d922093::t_de434cae389032 58-59,129-130,200-201,299
+api-client-python/daytona_api_client/api/object_storage_api.py
+  s_7098011d922093::t_68a99d4031542a 58-59,129-130,200-201,299
+api-client/src/api/object-storage-api.ts
+  s_7098011d922093::t_4929fe1ee95768 39-43,97,120,138
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2907baa14abd661317ada781549b5c578bafba84",
+  "prompts": {},
+  "sessions": {
+    "s_7098011d922093": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_ebf578d5effeZi8f4Mi0XihkoC",
+        "model": "gpt-6.1-sol-pro"
+      },
+      "human_author": "Dalin Stone <dalinkstone@gmail.com>"
+    }
+  }
+}
