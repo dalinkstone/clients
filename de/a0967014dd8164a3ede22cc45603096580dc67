@@ -1,0 +1,101 @@
+openapi-specs/api.json
+  s_89ff252e51688f::t_ce2976a8e52d03 8773-8781,15850
+sdk-python/src/daytona/_async/object_storage.py
+  s_89ff252e51688f::t_ce2976a8e52d03 19,90-93,97-98
+  s_1368e0e2bc6f14::t_ecafe82bdb8e6a 94,96
+  s_1368e0e2bc6f14::t_86f7823cf60660 95
+sdk-typescript/README.md
+  s_89ff252e51688f::t_43fb513981a44d 49-53,55-59,62-64,90-92,95-97
+  s_1368e0e2bc6f14::t_ecafe82bdb8e6a 54,60-61,86-87,93-94
+sdk-python/src/daytona/_sync/daytona.py
+  s_89ff252e51688f::t_ce2976a8e52d03 551-553
+sdk-typescript/src/__tests__/Snapshot.test.ts
+  s_89ff252e51688f::t_7795c1010288eb 295-297
+sdk-python/src/daytona/common/snapshot.py
+  s_89ff252e51688f::t_c5cbc3ac9fcb91 88-89
+artifacts/sdk-docs/typescript-sdk/snapshot.mdx
+  s_89ff252e51688f::t_f6e755f69ffcb0 20
+  s_89ff252e51688f::t_f007bb8661c74e 230,263
+sdk-python/src/daytona/_async/snapshot.py
+  s_89ff252e51688f::t_ce2976a8e52d03 148,157-159,181,266-268,280-298
+  s_89ff252e51688f::t_0f30e60c06c532 272-273
+sdk-python/src/daytona/_sync/snapshot.py
+  s_89ff252e51688f::t_ce2976a8e52d03 139,148,171,261-263,275-293
+  s_89ff252e51688f::t_0f30e60c06c532 267-268
+sdk-python/src/daytona/_sync/object_storage.py
+  s_1368e0e2bc6f14::t_ecafe82bdb8e6a 92,94
+  s_1368e0e2bc6f14::t_86f7823cf60660 93
+  s_89ff252e51688f::t_ce2976a8e52d03 17,88-91,95-96
+sdk-typescript/src/__tests__/BuildContext.test.ts
+  s_89ff252e51688f::t_cbae93e78c231b 94-99
+  s_89ff252e51688f::t_6383685414dff3 145
+  s_89ff252e51688f::t_86537c2b11695e 21
+  s_1368e0e2bc6f14::t_623c346148836a 44-49
+  s_1368e0e2bc6f14::t_ecafe82bdb8e6a 9,237-253
+  s_89ff252e51688f::t_26730296ac583b 93,100-103
+  s_89ff252e51688f::t_c5cbc3ac9fcb91 17,40-42,266,270,290-292
+  s_89ff252e51688f::t_19f3981047cee7 26-34,51-53,84-90,113-115,117-124,136-144,146-157,159-160,206-216,218-227,255-265,267-269,271-289,293-305
+  s_89ff252e51688f::t_7227de97085a5d 6
+  s_89ff252e51688f::t_7795c1010288eb 1-5,7-8,10-16,18-20,22-25,35-39,43,50,54-83,91-92,104-112,116,125-135,158,161-205,217,228-236,254,306
+sdk-python/README.md
+  s_89ff252e51688f::t_43fb513981a44d 41-56,61
+  s_1368e0e2bc6f14::t_ecafe82bdb8e6a 57-60
+sdk-typescript/src/Daytona.ts
+  s_89ff252e51688f::t_ce2976a8e52d03 113,700,715-720,741
+sdk-python/tests/test_build_context.py
+  s_89ff252e51688f::t_34dd5df119d25d 53-59,152,251-256
+  s_1368e0e2bc6f14::t_623c346148836a 6,85,103
+  s_1368e0e2bc6f14::t_ecafe82bdb8e6a 207-220
+  s_89ff252e51688f::t_b09719145769b4 24-25,132,151
+  s_89ff252e51688f::t_86537c2b11695e 1-5,7-23,26-52,60-84,86-102,104-131,133-150,153-179,182-206,221-250,257-262
+  s_89ff252e51688f::t_c5cbc3ac9fcb91 263-296
+  s_89ff252e51688f::t_43fb513981a44d 180-181
+artifacts/sdk-docs/python-sdk/async/async-snapshot.mdx
+  s_89ff252e51688f::t_2678c560b4f398 179-180,188-189,227-228
+BUILD_CONTEXT_STORAGE.md
+  s_89ff252e51688f::t_43fb513981a44d 1-5
+  s_1368e0e2bc6f14::t_ecafe82bdb8e6a 6-64
+artifacts/sdk-docs/python-sdk/sync/snapshot.mdx
+  s_89ff252e51688f::t_2678c560b4f398 179-180,188-189,227-228
+artifacts/sdk-docs/typescript-sdk/daytona.mdx
+  s_89ff252e51688f::t_f007bb8661c74e 496
+sdk-typescript/src/Snapshot.ts
+  s_89ff252e51688f::t_0f30e60c06c532 62
+  s_89ff252e51688f::t_6383685414dff3 401
+  s_89ff252e51688f::t_ce2976a8e52d03 74,218-223,381-383,390-400,402-414
+sdk-python/src/daytona/_async/daytona.py
+  s_89ff252e51688f::t_ce2976a8e52d03 683
+sdk-typescript/src/ObjectStorage.ts
+  s_1368e0e2bc6f14::t_ecafe82bdb8e6a 87-90
+  s_89ff252e51688f::t_ce2976a8e52d03 10,82-86,91-92
+sdk-typescript/src/__tests__/build-context.txt
+  s_89ff252e51688f::t_7795c1010288eb 1
+sdk-typescript/src/__tests__/Daytona.test.ts
+  s_89ff252e51688f::t_7795c1010288eb 632
+api-client/src/api/object-storage-api.ts
+  s_89ff252e51688f::t_d95080fbeb5285 35,39,58-61,89,93-94,112,116-117,130,134-135
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "dea0967014dd8164a3ede22cc45603096580dc67",
+  "prompts": {},
+  "sessions": {
+    "s_1368e0e2bc6f14": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_ec2318b01ffenPV3nvmNAzIHPJ",
+        "model": "gpt-6.1-sol-pro"
+      },
+      "human_author": "Dalin Stone <dalinkstone@gmail.com>"
+    },
+    "s_89ff252e51688f": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_ec2b9610affeNS9IM1CcJ3kI0g",
+        "model": "gpt-6.1-sol-pro"
+      },
+      "human_author": "Dalin Stone <dalinkstone@gmail.com>"
+    }
+  }
+}
