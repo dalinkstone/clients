@@ -7,7 +7,8 @@ import { ListObjectsV2Command, S3Client } from '@aws-sdk/client-s3'
 import { Upload } from '@aws-sdk/lib-storage'
 import * as crypto from 'crypto'
 import * as pathe from 'pathe'
-import { DaytonaError, DaytonaNotFoundError } from './errors/DaytonaError'
+import { DaytonaNotFoundError } from './errors/DaytonaError'
+import { buildContextError } from './utils/BuildContextError'
 import { dynamicImport } from './utils/Import'
 import { WithInstrumentation } from './utils/otel.decorator'
 
@@ -89,7 +90,7 @@ export class ObjectStorage {
         throw error
       }
       // Sanitize inside the decorated upload boundary, not after it records the raw storage error.
-      throw new DaytonaError('Failed to upload build context to object storage')
+      throw buildContextError(error, 'Failed to upload build context to object storage')
     }
 
     return pathHash

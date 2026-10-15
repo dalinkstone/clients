@@ -52,4 +52,8 @@ CLIENT_NAME=$(basename "$PROJECT_ROOT")
 sed -i '/^from.*\.configuration import Configuration$/a from . import __version__ as _pkg_version' "$pkg_root/api_client.py"
 sed -i "s|self\.user_agent = '[^']*'|self.user_agent = f'${CLIENT_NAME}/{_pkg_version}'|" "$pkg_root/api_client.py"
 
+if [ -f "$pkg_root/api/object_storage_api.py" ]; then
+  node "$(dirname "$0")/preserve-push-access-options.mjs" "$pkg_root/api/object_storage_api.py"
+fi
+
 echo "Postprocessed Python client at $PROJECT_ROOT"

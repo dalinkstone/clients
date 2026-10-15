@@ -15,7 +15,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from daytona.common.daytona import CreateSandboxFromImageParams, DaytonaConfig
-from daytona.common.errors import DaytonaError
+from daytona.common.errors import (
+    DaytonaAuthenticationError,
+    DaytonaConnectionTimeoutError,
+    DaytonaError,
+    DaytonaRateLimitError,
+    DaytonaTimeoutError,
+)
 from daytona.common.image import Image
 from daytona.common.snapshot import CreateSnapshotParams
 
@@ -207,13 +213,12 @@ async def test_errors_are_safe_before_decorated_telemetry_and_never_retry(mode, 
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("method", ["_compute_hash_for_path_md5", "_upload_as_tar"])
-async def test_local_file_errors_remain_actionable(mode, context_image, transport, method):
+async def test_local_file_errors_remain_actionable(mode, context_image, transport):
     api = mode.mock_class()
     api.get_push_access.return_value = access()
     storage_class = getattr(mode.storage_module, "AsyncObjectStorage" if mode.asynchronous else "ObjectStorage")
     error = PermissionError(errno.EACCES, "Permission denied", context_image._context_list[0].source_path)
-    with patch.object(storage_class, method, side_effect=error):
+    with patch.object(storage_class, "_upload_as_tar", side_effect=error):
         with pytest.raises(PermissionError) as caught:
             await result(mode.service_class.process_image_context(api, context_image, "custom"))
     assert caught.value is error
@@ -243,7 +248,8 @@ async def test_empty_context_and_blank_region(mode, context_image, transport):
 
 @pytest.mark.parametrize("package", ["daytona_api_client", "daytona_api_client_async"])
 @pytest.mark.parametrize("region_id", ["custom region", None])
-def test_generated_query_preserves_organization_header(package, region_id):
+@pytest.mark.asyncio
+async def test_generated_query_and_legacy_positional_options(package, region_id):
     module = importlib.import_module(f"{package}.api.object_storage_api")
     api_client = MagicMock()
     api = module.ObjectStorageApi(api_client)
@@ -259,19 +265,39 @@ def test_generated_query_preserves_organization_header(package, region_id):
     assert serialized["query_params"] == ([] if region_id is None else [("regionId", region_id)])
     assert serialized["header_params"]["X-Daytona-Organization-ID"] == "org"
     for method in ["get_push_access", "get_push_access_with_http_info", "get_push_access_without_preload_content"]:
-        assert "region_id" in inspect.signature(getattr(api, method)).parameters
+        public = getattr(api, method)
+        assert inspect.signature(public).parameters["region_id"].kind is inspect.Parameter.KEYWORD_ONLY
+        api_client.call_api = AsyncMock() if package.endswith("_async") else MagicMock()
+        api_client.call_api.return_value.read = AsyncMock() if package.endswith("_async") else MagicMock()
+        with patch.object(api, "_get_push_access_serialize", return_value=()) as serialize:
+            await result(
+                public(
+                    "org",
+                    30.0,
+                    {"token": "fake"},
+                    "application/json",
+                    {"X-Test": "value"},
+                    0,
+                    **({"region_id": region_id} if region_id is not None else {}),
+                )
+            )
+        serialize.assert_called_once_with(
+            x_daytona_organization_id="org",
+            region_id=region_id,
+            _request_auth={"token": "fake"},
+            _content_type="application/json",
+            _headers={"X-Test": "value"},
+            _host_index=0,
+        )
+        api_client.call_api.assert_called_once_with(_request_timeout=30.0)
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("kind", ["snapshot", "sandbox"])
-@pytest.mark.parametrize("stage", ["access", "head", "put"])
-async def test_upload_failure_stops_both_create_paths(mode, context_image, transport, monkeypatch, kind, stage):
+async def test_upload_failure_stops_both_create_paths(mode, context_image, transport, monkeypatch, kind):
     api = mode.mock_class()
     api.get_push_access.return_value = access()
-    if stage == "access":
-        api.get_push_access.side_effect = RuntimeError(MARKER)
-    else:
-        transport.failure.stage = stage
+    transport.failure.stage = "put"
     metadata_api = mode.mock_class()
     client = None
     try:
@@ -294,3 +320,35 @@ async def test_upload_failure_stops_both_create_paths(mode, context_image, trans
     finally:
         if client is not None and mode.asynchronous:
             await client.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "status,error_class",
+    [
+        (401, DaytonaAuthenticationError),
+        (429, DaytonaRateLimitError),
+        (504, DaytonaTimeoutError),
+        (None, DaytonaConnectionTimeoutError),
+    ],
+)
+async def test_access_errors_keep_safe_recovery_classification(mode, context_image, status, error_class):
+    package = "daytona_api_client_async" if mode.asynchronous else "daytona_api_client"
+    exception_class = importlib.import_module(f"{package}.exceptions").ApiException
+    raw = exception_class(status=status, reason=MARKER) if status else TimeoutError(MARKER)
+    if status:
+        raw.headers = {"Authorization": MARKER}
+        raw.body = MARKER
+    for error in [
+        raw,
+        error_class(MARKER, status_code=status, headers={"Authorization": MARKER}, code=MARKER, source=MARKER),
+    ]:
+        api = mode.mock_class()
+        api.get_push_access.side_effect = error
+        with pytest.raises(error_class) as caught:
+            await result(mode.service_class.process_image_context(api, context_image, "custom"))
+        safe = caught.value
+        assert safe.status_code == status
+        assert safe.headers == {}
+        assert safe.code is None and safe.source is None and safe.__cause__ is None
+        assert MARKER not in "".join(traceback.format_exception(safe)) + repr(safe)

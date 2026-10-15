@@ -42,6 +42,7 @@
       "apiClient",
       "{workspaceRoot}/hack/python-client/openapi-templates/**/*",
       "{workspaceRoot}/hack/python-client/postprocess.sh",
+      "{workspaceRoot}/hack/python-client/preserve-push-access-options.mjs",
       "{workspaceRoot}/hack/python-client/patch-toolbox-spec.mjs"
     ],
     "goApiClient": [
@@ -52,6 +53,7 @@
     "tsApiClient": [
       "apiClient",
       "{workspaceRoot}/hack/ts-client/postprocess.sh",
+      "{workspaceRoot}/hack/ts-client/preserve-push-access-options.mjs",
       "{workspaceRoot}/hack/ts-client/fix-axios-response-type.sh"
     ]
   },

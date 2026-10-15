@@ -49,16 +49,13 @@ const daytona = new Daytona({
 Local `Image` contexts use region-aware API upload access by default for both
 `daytona.snapshot.create` and `daytona.create`. Set `target` (or `DAYTONA_TARGET`)
 to your custom Daytona region ID. Snapshot `regionId` overrides that target. The
-SDK sends the same captured region in `GET /object-storage/push-access?regionId=...`
-and the create request. With the server changes in
-[daytona-ai #1317](https://github.com/daytona/daytona-ai/pull/1317) deployed, an owned region
-configured with a build-context bucket receives temporary credentials for it.
+SDK uses the same captured region for upload access and creation.
 
 Without an SDK target, creation still uses the organization's server-side default,
 but upload access is unqualified. Explicitly configure the custom target for BYOC;
-the SDK does not discover the organization's default region. See the
-[build-context storage guide](../BUILD_CONTEXT_STORAGE.md) for server fields,
-IAM/runner setup, release order, and context retention.
+the SDK does not discover the organization's default region. The
+[build-context storage guide](../BUILD_CONTEXT_STORAGE.md) covers the required
+server deployment, IAM/runner setup, release order, and failure behavior.
 
 For advanced integrations only, `getBuildContextUploadAccess` replaces API-issued
 access for local contexts. No callback is needed on the managed path:
@@ -83,18 +80,9 @@ const daytona = new Daytona({
 })
 ```
 
-An explicit nonblank target is required for the override when uploading local
-contexts. The provider must return the bucket and organization prefix that the selected region's runners
-read; SDK upload credentials are independent of runner IRSA. Supply scoped
-credentials valid for the upload and retain contexts for pending builds/rebuilds.
-Provider, access, or upload failures stop creation without SDK fallback. Access and
-storage transport exceptions are replaced with fixed safe messages before SDK span
-recording, without retaining the original error as a cause. This is not a guarantee
-about third-party/custom-provider logging. Local filesystem errors retain their
-diagnostics. The managed API can deliberately select
-hosted access for absent, unknown, shared, foreign, or unconfigured regions. Daytona
-still receives Dockerfile content and context hashes, not upload credentials;
-image/registry storage is separate.
+The override requires a nonblank target and bucket, and must return access to the
+organization prefix read by that region's runners. Override failures never fall
+back to API-issued access.
 
 ## Create a sandbox
 

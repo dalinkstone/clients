@@ -43,7 +43,6 @@ class ObjectStorageApi:
     def get_push_access(
         self,
         x_daytona_organization_id: Annotated[Optional[StrictStr], Field(description="Use with JWT to specify the organization ID")] = None,
-        region_id: Annotated[Optional[StrictStr], Field(description="Region the build context will be used in. When that region has its own build-context bucket, the returned credentials target it; otherwise they target the Daytona-hosted bucket.")] = None,
         _request_timeout: Union[
             None,
             Annotated[StrictFloat, Field(gt=0)],
@@ -56,6 +55,8 @@ class ObjectStorageApi:
         _content_type: Optional[StrictStr] = None,
         _headers: Optional[Dict[StrictStr, Any]] = None,
         _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
+        *,
+        region_id: Annotated[Optional[StrictStr], Field(description="Region the build context will be used in. When that region has its own build-context bucket, the returned credentials target it; otherwise they target the Daytona-hosted bucket.")] = None,
     ) -> StorageAccessDto:
         """Get temporary storage access for pushing objects
 
@@ -113,7 +114,6 @@ class ObjectStorageApi:
     def get_push_access_with_http_info(
         self,
         x_daytona_organization_id: Annotated[Optional[StrictStr], Field(description="Use with JWT to specify the organization ID")] = None,
-        region_id: Annotated[Optional[StrictStr], Field(description="Region the build context will be used in. When that region has its own build-context bucket, the returned credentials target it; otherwise they target the Daytona-hosted bucket.")] = None,
         _request_timeout: Union[
             None,
             Annotated[StrictFloat, Field(gt=0)],
@@ -126,6 +126,8 @@ class ObjectStorageApi:
         _content_type: Optional[StrictStr] = None,
         _headers: Optional[Dict[StrictStr, Any]] = None,
         _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
+        *,
+        region_id: Annotated[Optional[StrictStr], Field(description="Region the build context will be used in. When that region has its own build-context bucket, the returned credentials target it; otherwise they target the Daytona-hosted bucket.")] = None,
     ) -> ApiResponse[StorageAccessDto]:
         """Get temporary storage access for pushing objects
 
@@ -183,7 +185,6 @@ class ObjectStorageApi:
     def get_push_access_without_preload_content(
         self,
         x_daytona_organization_id: Annotated[Optional[StrictStr], Field(description="Use with JWT to specify the organization ID")] = None,
-        region_id: Annotated[Optional[StrictStr], Field(description="Region the build context will be used in. When that region has its own build-context bucket, the returned credentials target it; otherwise they target the Daytona-hosted bucket.")] = None,
         _request_timeout: Union[
             None,
             Annotated[StrictFloat, Field(gt=0)],
@@ -196,6 +197,8 @@ class ObjectStorageApi:
         _content_type: Optional[StrictStr] = None,
         _headers: Optional[Dict[StrictStr, Any]] = None,
         _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
+        *,
+        region_id: Annotated[Optional[StrictStr], Field(description="Region the build context will be used in. When that region has its own build-context bucket, the returned credentials target it; otherwise they target the Daytona-hosted bucket.")] = None,
     ) -> RESTResponseType:
         """Get temporary storage access for pushing objects
 
@@ -293,7 +296,7 @@ class ObjectStorageApi:
 
         # authentication setting
         _auth_settings: List[str] = [
-            'bearer', 
+            'bearer',
             'oauth2'
         ]
 

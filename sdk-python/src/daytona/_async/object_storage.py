@@ -15,8 +15,8 @@ from obstore.store import S3Store
 
 from .._utils.docs_ignore import docs_ignore
 from .._utils.environment import isolated_env
+from .._utils.errors import build_context_error
 from .._utils.otel_decorator import with_instrumentation
-from ..common.errors import DaytonaError
 
 # These four values are coupled; changing one in isolation regresses uploads.
 # UPLOAD_CHUNK_SIZE is the S3 part size, and S3 rejects any part but the last below
@@ -95,7 +95,7 @@ class AsyncObjectStorage:
             if isinstance(error, OSError) and getattr(error, "filename", None) is not None:
                 raise
             # Discard credential-bearing transport details before the upload decorator records them.
-            raise DaytonaError("Failed to upload build context to object storage") from None
+            raise build_context_error(error, "Failed to upload build context to object storage") from None
 
         return path_hash
 

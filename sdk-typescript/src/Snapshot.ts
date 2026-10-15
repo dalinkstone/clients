@@ -16,6 +16,7 @@ import type { Resources } from './Daytona'
 import { processStreamingResponse } from './utils/Stream'
 import { dynamicImport } from './utils/Import'
 import { WithInstrumentation } from './utils/otel.decorator'
+import { buildContextError } from './utils/BuildContextError'
 
 /**
  * Represents a Daytona Snapshot which is a pre-configured sandbox.
@@ -393,9 +394,9 @@ export class SnapshotService {
         getBuildContextUploadAccess && regionId
           ? await getBuildContextUploadAccess(regionId)
           : (await objectStorageApi.getPushAccess(undefined, regionId)).data
-    } catch {
+    } catch (error) {
       // Access errors can embed credentials; discard them before instrumentation records the exception.
-      throw new DaytonaError('Failed to obtain build-context upload access')
+      throw buildContextError(error, 'Failed to obtain build-context upload access')
     }
     if (!pushAccessCreds.bucket?.trim()) {
       throw new DaytonaInvalidArgumentError('Build-context upload access must specify a bucket')
@@ -410,8 +411,8 @@ export class SnapshotService {
         bucketName: pushAccessCreds.bucket,
         region: pushAccessCreds.region,
       })
-    } catch {
-      throw new DaytonaError('Failed to initialize build-context storage')
+    } catch (error) {
+      throw buildContextError(error, 'Failed to initialize build-context storage')
     }
 
     const contextHashes = []

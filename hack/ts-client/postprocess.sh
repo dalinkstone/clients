@@ -25,4 +25,8 @@ else
   sed -i "s|\.\.\.param\.baseOptions?.headers,|'User-Agent': \`${CLIENT_NAME}/\${packageJson.version}\`,\n                ...param.baseOptions?.headers,|" "$CONFIG"
 fi
 
+if [ -f "$SRC_DIR/api/object-storage-api.ts" ]; then
+  node "$(dirname "$0")/preserve-push-access-options.mjs" "$SRC_DIR/api/object-storage-api.ts"
+fi
+
 echo "Postprocessed TypeScript client at $SRC_DIR"

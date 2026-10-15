@@ -36,7 +36,11 @@ export const ObjectStorageApiAxiosParamCreator = function (configuration?: Confi
          * @param {*} [options] Override http request option.
          * @throws {RequiredError}
          */
-        getPushAccess: async (xDaytonaOrganizationID?: string, regionId?: string, options: RawAxiosRequestConfig = {}): Promise<RequestArgs> => {
+        getPushAccess: async (xDaytonaOrganizationID?: string, regionId?: string | RawAxiosRequestConfig, options: RawAxiosRequestConfig = {}): Promise<RequestArgs> => {
+            if (typeof regionId === 'object' && regionId !== null) {
+                options = regionId;
+                regionId = undefined;
+            }
             const localVarPath = `/object-storage/push-access`;
             // use dummy base URL string because the URL constructor only accepts absolute URLs.
             const localVarUrlObj = new URL(localVarPath, DUMMY_BASE_URL);
@@ -90,7 +94,7 @@ export const ObjectStorageApiFp = function(configuration?: Configuration) {
          * @param {*} [options] Override http request option.
          * @throws {RequiredError}
          */
-        async getPushAccess(xDaytonaOrganizationID?: string, regionId?: string, options?: RawAxiosRequestConfig): Promise<(axios?: AxiosInstance, basePath?: string) => AxiosPromise<StorageAccessDto>> {
+        async getPushAccess(xDaytonaOrganizationID?: string, regionId?: string | RawAxiosRequestConfig, options?: RawAxiosRequestConfig): Promise<(axios?: AxiosInstance, basePath?: string) => AxiosPromise<StorageAccessDto>> {
             const localVarAxiosArgs = await localVarAxiosParamCreator.getPushAccess(xDaytonaOrganizationID, regionId, options);
             const localVarOperationServerIndex = configuration?.serverIndex ?? 0;
             const localVarOperationServerBasePath = operationServerMap['ObjectStorageApi.getPushAccess']?.[localVarOperationServerIndex]?.url;
@@ -113,7 +117,7 @@ export const ObjectStorageApiFactory = function (configuration?: Configuration, 
          * @param {*} [options] Override http request option.
          * @throws {RequiredError}
          */
-        getPushAccess(xDaytonaOrganizationID?: string, regionId?: string, options?: RawAxiosRequestConfig): AxiosPromise<StorageAccessDto> {
+        getPushAccess(xDaytonaOrganizationID?: string, regionId?: string | RawAxiosRequestConfig, options?: RawAxiosRequestConfig): AxiosPromise<StorageAccessDto> {
             return localVarFp.getPushAccess(xDaytonaOrganizationID, regionId, options).then((request) => request(axios, basePath));
         },
     };
@@ -131,7 +135,7 @@ export class ObjectStorageApi extends BaseAPI {
      * @param {*} [options] Override http request option.
      * @throws {RequiredError}
      */
-    public getPushAccess(xDaytonaOrganizationID?: string, regionId?: string, options?: RawAxiosRequestConfig) {
+    public getPushAccess(xDaytonaOrganizationID?: string, regionId?: string | RawAxiosRequestConfig, options?: RawAxiosRequestConfig) {
         return ObjectStorageApiFp(this.configuration).getPushAccess(xDaytonaOrganizationID, regionId, options).then((request) => request(this.axios, this.basePath));
     }
 }

@@ -16,7 +16,7 @@ from daytona_api_client_async import (
 )
 from daytona_api_client_async.exceptions import NotFoundException
 
-from .._utils.errors import intercept_errors
+from .._utils.errors import build_context_error, intercept_errors
 from .._utils.otel_decorator import with_instrumentation
 from .._utils.stream import process_streaming_response
 from .._utils.timeout import with_timeout
@@ -281,8 +281,8 @@ class AsyncSnapshotService:
             raise DaytonaValidationError("Build-context target region must not be blank")
         try:
             push_access_creds = await object_storage_api.get_push_access(region_id=region_id)
-        except Exception:
-            raise DaytonaError("Failed to obtain build-context upload access") from None
+        except Exception as error:
+            raise build_context_error(error, "Failed to obtain build-context upload access") from None
         if not push_access_creds.bucket or not push_access_creds.bucket.strip():
             raise DaytonaValidationError("Build-context upload access must specify a bucket")
         try:
@@ -294,8 +294,8 @@ class AsyncSnapshotService:
                 push_access_creds.bucket,
                 region=push_access_creds.region,
             )
-        except Exception:
-            raise DaytonaError("Failed to initialize build-context storage") from None
+        except Exception as error:
+            raise build_context_error(error, "Failed to initialize build-context storage") from None
         context_hashes: list[str] = []
         for context in image._context_list:
             context_hash = await object_storage.upload(

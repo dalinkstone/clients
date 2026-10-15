@@ -79,6 +79,18 @@ def _prefix_message(message_prefix: str, message: str) -> str:
     return f"{message_prefix}{message}"
 
 
+def build_context_error(error: Exception, message: str) -> DaytonaError:
+    """Keep recovery classification, but no credential-bearing details, in SDK spans."""
+    if isinstance(error, DaytonaError):
+        return type(error)(message, status_code=error.status_code)
+    if isinstance(error, OPENAPI_EXCEPTIONS):
+        return create_daytona_error(message, status_code=getattr(error, "status", None))
+    for source_error, error_class in TRANSPORT_ERROR_TO_DAYTONA_ERROR:
+        if isinstance(error, source_error):
+            return error_class(message)
+    return DaytonaError(message)
+
+
 def is_validation_error(exc: BaseException) -> bool:
     """Whether ``exc`` is, or was caused by, a pydantic ``ValidationError``.
 

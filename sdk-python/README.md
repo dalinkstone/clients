@@ -43,21 +43,13 @@ config = DaytonaConfig(
 Both `Daytona` and `AsyncDaytona` forward the configured `target` (or
 `DAYTONA_TARGET`) to object-storage push access when uploading local `Image`
 contexts, for snapshot creation and sandbox creation from an image. Snapshot
-`CreateSnapshotParams.region_id` overrides the client target. The upload query and
-create payload use the same captured region.
+`CreateSnapshotParams.region_id` overrides the client target. Upload access and
+creation use the same captured region.
 
-With [daytona-ai #1317](https://github.com/daytona/daytona-ai/pull/1317) deployed and
-the owned region's bucket/role configured, no credential callback is needed. Set an
-explicit custom target even if it is the organization's default: without an SDK
+Set an explicit custom target even if it is the organization's default: without an SDK
 target, creation keeps its server-side default but push access is unqualified.
-String images and images without local contexts do not request upload access.
-
-Access and storage transport failures stop creation without SDK fallback and use
-fixed safe errors before SDK telemetry records them. The API's own hosted-bucket
-selection rules still apply. Local filesystem errors retain their diagnostics.
-See the [build-context storage guide](../BUILD_CONTEXT_STORAGE.md) for IAM, runner
-access, credential lifetime, retention, and release order. The advanced callback
-override is TypeScript-only.
+See the [build-context storage guide](../BUILD_CONTEXT_STORAGE.md) for the required
+server deployment, IAM/runner setup, release order, and failure behavior.
 
 ## Create a sandbox
 

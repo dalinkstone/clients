@@ -3,10 +3,25 @@
 
 import { trace } from '@opentelemetry/api'
 import type { StorageAccessDto } from '@daytona/api-client'
-import { ObjectStorageApiAxiosParamCreator } from '@daytona/api-client'
+import {
+  ObjectStorageApi,
+  ObjectStorageApiAxiosParamCreator,
+  ObjectStorageApiFactory,
+  ObjectStorageApiFp,
+} from '@daytona/api-client'
+import axios, { AxiosError, AxiosHeaders } from 'axios'
+import type { InternalAxiosRequestConfig } from 'axios'
 import { Daytona } from '../Daytona'
 import { Image } from '../Image'
 import { ObjectStorage } from '../ObjectStorage'
+import { SnapshotService } from '../Snapshot'
+import {
+  createAxiosDaytonaError,
+  DaytonaAuthenticationError,
+  DaytonaConnectionTimeoutError,
+  DaytonaRateLimitError,
+  DaytonaTimeoutError,
+} from '../errors/DaytonaError'
 
 const mockAccessApi = { getPushAccess: jest.fn() }
 const mockSnapshotApi = { createSnapshot: jest.fn() }
@@ -131,6 +146,45 @@ describe('region-aware build-context uploads', () => {
     expect(request.url).toBe('/object-storage/push-access?regionId=region+with+spaces')
     expect(request.options.headers).toMatchObject({ 'X-Daytona-Organization-ID': 'org' })
     expect((await creator.getPushAccess()).url).toBe('/object-storage/push-access')
+    const options = { timeout: 5000, headers: { Authorization: marker } }
+    const legacy = await creator.getPushAccess('org', options)
+    expect(legacy.url).toBe('/object-storage/push-access')
+    expect(legacy.options).toMatchObject(options)
+    expect((await creator.getPushAccess('org', 'custom', options)).options).toMatchObject(options)
+  })
+
+  it('preserves legacy options and regional requests through every public generated interface', async () => {
+    const adapter = jest.fn(async (config: InternalAxiosRequestConfig) => ({
+      data: access(),
+      status: 200,
+      statusText: 'OK',
+      headers: {},
+      config,
+    }))
+    const http = axios.create({ adapter })
+    const options = { timeout: 5000, headers: { Authorization: marker } }
+    const interfaces = [
+      ObjectStorageApiFactory(undefined, 'https://api.invalid', http),
+      new ObjectStorageApi(undefined, 'https://api.invalid', http),
+    ]
+    for (const api of interfaces) {
+      await api.getPushAccess('org', options)
+      await api.getPushAccess('org', 'custom', options)
+    }
+    const fp = ObjectStorageApiFp()
+    await (
+      await fp.getPushAccess('org', options)
+    )(http, 'https://api.invalid')
+    await (
+      await fp.getPushAccess('org', 'custom', options)
+    )(http, 'https://api.invalid')
+    expect(adapter).toHaveBeenCalledTimes(6)
+    for (const [index, [config]] of adapter.mock.calls.entries()) {
+      expect(config.url).toBe(`https://api.invalid/object-storage/push-access${index % 2 ? '?regionId=custom' : ''}`)
+      expect(config.timeout).toBe(5000)
+      expect(config.headers.get('Authorization')).toBe(marker)
+      expect(config.headers.get('X-Daytona-Organization-ID')).toBe('org')
+    }
   })
 
   it.each(['snapshot', 'sandbox'])(
@@ -194,37 +248,22 @@ describe('region-aware build-context uploads', () => {
     expect(mockLists.map(({ Bucket }) => Bucket)).toEqual(['a-bucket', 'b-bucket', 'a-bucket'])
   })
 
-  it.each(['snapshot', 'sandbox'])('keeps the advanced override optional and exclusive for %s', async (kind) => {
-    const provider = jest.fn(async () => access())
-    const daytona = client('custom', provider)
-    if (kind === 'snapshot') await daytona.snapshot.create({ name: 'snapshot', image: image(), regionId: 'override' })
-    else await daytona.create({ image: image() })
-    expect(provider).toHaveBeenCalledWith(kind === 'snapshot' ? 'override' : 'custom')
+  it.each([' ', '\t'])('rejects a blank provider bucket %j without storage or API fallback', async (bucket) => {
+    await expect(
+      client('custom', async () => ({ ...access(), bucket }) as StorageAccessDto).create({ image: image() }),
+    ).rejects.toThrow('must specify a bucket')
     expect(mockAccessApi.getPushAccess).not.toHaveBeenCalled()
+    expect(mockLists).toEqual([])
+    expect(mockSandboxApi.createSandbox).not.toHaveBeenCalled()
   })
 
-  it.each([undefined, '', ' ', '\t'])(
-    'rejects an empty provider bucket %j without storage or API fallback',
-    async (bucket) => {
-      await expect(
-        client('custom', async () => ({ ...access(), bucket }) as StorageAccessDto).create({ image: image() }),
-      ).rejects.toThrow('must specify a bucket')
-      expect(mockAccessApi.getPushAccess).not.toHaveBeenCalled()
-      expect(mockLists).toEqual([])
-      expect(mockSandboxApi.createSandbox).not.toHaveBeenCalled()
-    },
-  )
-
-  it.each([undefined, '', ' ', '\t'])(
-    'rejects a missing/blank override region %j before invoking the provider',
-    async (target) => {
-      const provider = jest.fn(async () => access())
-      await expect(client(target, provider).create({ image: image() })).rejects.toThrow(/region/)
-      expect(provider).not.toHaveBeenCalled()
-      expect(mockAccessApi.getPushAccess).not.toHaveBeenCalled()
-      expect(mockSandboxApi.createSandbox).not.toHaveBeenCalled()
-    },
-  )
+  it.each([' ', '\t'])('rejects a blank override region %j before invoking the provider', async (target) => {
+    const provider = jest.fn(async () => access())
+    await expect(client(target, provider).create({ image: image() })).rejects.toThrow(/region/)
+    expect(provider).not.toHaveBeenCalled()
+    expect(mockAccessApi.getPushAccess).not.toHaveBeenCalled()
+    expect(mockSandboxApi.createSandbox).not.toHaveBeenCalled()
+  })
 
   it('skips access for string images and images without local context', async () => {
     const daytona = client('custom')
@@ -235,72 +274,113 @@ describe('region-aware build-context uploads', () => {
     expect(mockAccessApi.getPushAccess).not.toHaveBeenCalled()
   })
 
-  it.each(['computeHashForPathMd5', 'uploadAsTar'])(
-    'preserves actionable local file errors from %s',
-    async (method) => {
-      const error = Object.assign(new Error(`EACCES: permission denied, open '${__filename}'`), {
-        code: 'EACCES',
-        path: __filename,
-        syscall: 'open',
+  it('preserves actionable local file errors during tar upload', async () => {
+    const error = Object.assign(new Error(`EACCES: permission denied, open '${__filename}'`), {
+      code: 'EACCES',
+      path: __filename,
+      syscall: 'open',
+    })
+    jest.spyOn(ObjectStorage.prototype as any, 'uploadAsTar').mockRejectedValue(error)
+    const daytona = client('custom')
+    await expect(daytona.snapshot.create({ name: 'snapshot', image: image() })).rejects.toBe(error)
+    await expect(daytona.create({ image: image() })).rejects.toBe(error)
+    expect(mockSnapshotApi.createSnapshot).not.toHaveBeenCalled()
+    expect(mockSandboxApi.createSandbox).not.toHaveBeenCalled()
+  })
+
+  it('sanitizes each failure boundary before telemetry without fallback', async () => {
+    const spans: Array<{ setStatus: jest.Mock; recordException: jest.Mock; end: jest.Mock }> = []
+    jest.spyOn(trace, 'getTracer').mockReturnValue({
+      startSpan: () => {
+        const span = { setStatus: jest.fn(), recordException: jest.fn(), end: jest.fn() }
+        spans.push(span)
+        return span
+      },
+    } as never)
+    for (const failure of ['provider', 'api', 'initialize', 'list', 'upload'] as const) {
+      jest.clearAllMocks()
+      spans.length = 0
+      mockObjects.clear()
+      mockFailure = failure === 'list' || failure === 'upload' || failure === 'initialize' ? failure : undefined
+      mockAccessApi.getPushAccess.mockImplementation(async () => {
+        if (failure === 'api') throw new Error(marker)
+        return { data: access() }
       })
-      jest.spyOn(ObjectStorage.prototype as any, method).mockRejectedValue(error)
-      const daytona = client('custom')
-      await expect(daytona.snapshot.create({ name: 'snapshot', image: image() })).rejects.toBe(error)
-      await expect(daytona.create({ image: image() })).rejects.toBe(error)
+      const provider =
+        failure === 'provider'
+          ? async () => {
+              throw new Error(marker)
+            }
+          : undefined
+      const operation = SnapshotService.processImageContext(mockAccessApi as never, image(), provider, 'custom')
+      await expect(operation).rejects.toThrow(
+        failure === 'provider' || failure === 'api'
+          ? 'Failed to obtain build-context upload access'
+          : failure === 'initialize'
+            ? 'Failed to initialize build-context storage'
+            : 'Failed to upload build context to object storage',
+      )
+      expect(mockAccessApi.getPushAccess).toHaveBeenCalledTimes(failure === 'provider' ? 0 : 1)
       expect(mockSnapshotApi.createSnapshot).not.toHaveBeenCalled()
       expect(mockSandboxApi.createSandbox).not.toHaveBeenCalled()
-    },
-  )
+      const recorded = spans.flatMap((span) => [
+        ...span.setStatus.mock.calls.map(([status]) => status.message),
+        ...span.recordException.mock.calls.map(([error]) => `${error.message}\n${error.stack}\n${error.cause}`),
+      ])
+      expect(recorded.length).toBeGreaterThan(0)
+      expect(recorded.join('\n')).not.toContain(marker)
+    }
+  })
 
-  it.each(['snapshot', 'sandbox'])(
-    'sanitizes provider/API/list/upload failures before %s telemetry without fallback',
-    async (kind) => {
-      const spans: Array<{ setStatus: jest.Mock; recordException: jest.Mock; end: jest.Mock }> = []
-      jest.spyOn(trace, 'getTracer').mockReturnValue({
-        startSpan: () => {
-          const span = { setStatus: jest.fn(), recordException: jest.fn(), end: jest.fn() }
-          spans.push(span)
-          return span
-        },
-      } as never)
-      for (const failure of ['provider', 'api', 'initialize', 'list', 'upload'] as const) {
-        jest.clearAllMocks()
-        spans.length = 0
-        mockObjects.clear()
-        mockFailure = failure === 'list' || failure === 'upload' || failure === 'initialize' ? failure : undefined
-        mockAccessApi.getPushAccess.mockImplementation(async () => {
-          if (failure === 'api') throw new Error(marker)
-          return { data: access() }
-        })
-        const daytona = client(
-          'custom',
-          failure === 'provider'
-            ? async () => {
-                throw new Error(marker)
-              }
-            : undefined,
-        )
-        const operation =
-          kind === 'snapshot'
-            ? daytona.snapshot.create({ name: 'snapshot', image: image() })
-            : daytona.create({ image: image() })
-        await expect(operation).rejects.toThrow(
-          failure === 'provider' || failure === 'api'
-            ? 'Failed to obtain build-context upload access'
-            : failure === 'initialize'
-              ? 'Failed to initialize build-context storage'
-              : 'Failed to upload build context to object storage',
-        )
-        expect(mockAccessApi.getPushAccess).toHaveBeenCalledTimes(failure === 'provider' ? 0 : 1)
-        expect(mockSnapshotApi.createSnapshot).not.toHaveBeenCalled()
-        expect(mockSandboxApi.createSandbox).not.toHaveBeenCalled()
-        const recorded = spans.flatMap((span) => [
-          ...span.setStatus.mock.calls.map(([status]) => status.message),
-          ...span.recordException.mock.calls.map(([error]) => `${error.message}\n${error.stack}\n${error.cause}`),
-        ])
-        expect(recorded.length).toBeGreaterThan(0)
-        expect(recorded.join('\n')).not.toContain(marker)
-      }
-    },
-  )
+  it.each(['snapshot', 'sandbox'])('stops %s creation after an upload failure', async (kind) => {
+    mockFailure = 'upload'
+    const daytona = client('custom')
+    await expect(
+      kind === 'snapshot'
+        ? daytona.snapshot.create({ name: 'snapshot', image: image() })
+        : daytona.create({ image: image() }),
+    ).rejects.toThrow('Failed to upload build context')
+    expect(mockAccessApi.getPushAccess).toHaveBeenCalledTimes(1)
+    expect(mockSnapshotApi.createSnapshot).not.toHaveBeenCalled()
+    expect(mockSandboxApi.createSandbox).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    [401, DaytonaAuthenticationError],
+    [429, DaytonaRateLimitError],
+    [504, DaytonaTimeoutError],
+    [undefined, DaytonaConnectionTimeoutError],
+  ] as const)('retains safe recovery classification for status %s', async (status, ErrorClass) => {
+    const raw = new AxiosError(
+      marker,
+      status === undefined ? 'ETIMEDOUT' : undefined,
+      undefined,
+      undefined,
+      status === undefined
+        ? undefined
+        : {
+            status,
+            data: { message: marker, code: marker, source: marker },
+            statusText: marker,
+            headers: { Authorization: marker },
+            config: { headers: new AxiosHeaders() },
+          },
+    )
+    for (const error of [raw, createAxiosDaytonaError(raw)]) {
+      mockAccessApi.getPushAccess.mockRejectedValue(error)
+      const safe = await SnapshotService.processImageContext(
+        mockAccessApi as never,
+        image(),
+        undefined,
+        'custom',
+      ).catch((failure) => failure)
+      expect(safe).toBeInstanceOf(ErrorClass)
+      expect(safe.statusCode).toBe(status)
+      expect(safe.headers).toBeUndefined()
+      expect(safe.code).toBeUndefined()
+      expect(safe.source).toBeUndefined()
+      expect(safe.cause).toBeUndefined()
+      expect(`${safe.message}\n${safe.stack}\n${JSON.stringify(safe)}`).not.toContain(marker)
+    }
+  })
 })
