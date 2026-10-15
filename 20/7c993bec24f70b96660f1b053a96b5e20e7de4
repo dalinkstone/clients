@@ -1,0 +1,21 @@
+hack/python-client/preserve-push-access-options.mjs
+  s_07982de03ad672::t_ac5d42f18a678f 1-3
+hack/ts-client/preserve-push-access-options.mjs
+  s_07982de03ad672::t_ac5d42f18a678f 1-3
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "207c993bec24f70b96660f1b053a96b5e20e7de4",
+  "prompts": {},
+  "sessions": {
+    "s_07982de03ad672": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_ec3685805ffePnlBFHkAPTjLv4",
+        "model": "gpt-6.1-sol-pro"
+      },
+      "human_author": "Dalin Stone <dalinkstone@gmail.com>"
+    }
+  }
+}
