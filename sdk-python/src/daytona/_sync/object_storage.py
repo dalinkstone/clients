@@ -14,6 +14,7 @@ from obstore.store import S3Store
 from .._utils.docs_ignore import docs_ignore
 from .._utils.environment import isolated_env
 from .._utils.otel_decorator import with_instrumentation
+from ..common.errors import DaytonaError
 
 # These four values are coupled; changing one in isolation regresses uploads.
 # UPLOAD_CHUNK_SIZE is the S3 part size, and S3 rejects any part but the last below
@@ -84,12 +85,15 @@ class ObjectStorage:
         path_hash = self._compute_hash_for_path_md5(path, archive_base_path)
         s3_key = f"{organization_id}/{path_hash}/context.tar"
 
-        # Check if it already exists in S3
-        if self._file_exists_in_s3(s3_key):
-            return path_hash
-
-        # Upload to S3
-        self._upload_as_tar(s3_key, path, archive_base_path)
+        try:
+            if self._file_exists_in_s3(s3_key):
+                return path_hash
+            self._upload_as_tar(s3_key, path, archive_base_path)
+        except Exception as error:
+            if isinstance(error, OSError) and getattr(error, "filename", None) is not None:
+                raise
+            # Discard credential-bearing transport details before the upload decorator records them.
+            raise DaytonaError("Failed to upload build context to object storage") from None
 
         return path_hash
 

@@ -136,6 +136,7 @@ class SnapshotService:
             )
             ```
         """
+        region_id = params.region_id or self.__default_region_id
         create_snapshot_req = CreateSnapshot(
             name=params.name,
         )
@@ -144,7 +145,7 @@ class SnapshotService:
             create_snapshot_req.image_name = params.image
             create_snapshot_req.entrypoint = params.entrypoint
         else:
-            context_hashes = SnapshotService.process_image_context(self.__object_storage_api, params.image)
+            context_hashes = SnapshotService.process_image_context(self.__object_storage_api, params.image, region_id)
             create_snapshot_req.build_info = CreateBuildInfo(
                 context_hashes=context_hashes,
                 dockerfile_content=(
@@ -167,7 +168,7 @@ class SnapshotService:
             create_snapshot_req.memory = params.resources.memory
             create_snapshot_req.disk = params.resources.disk
 
-        create_snapshot_req.region_id = params.region_id or self.__default_region_id
+        create_snapshot_req.region_id = region_id
         create_snapshot_req.sandbox_class = (
             SyncSandboxClass(params.sandbox_class.value) if params.sandbox_class is not None else None
         )
@@ -257,26 +258,39 @@ class SnapshotService:
 
     @staticmethod
     @with_instrumentation()
-    def process_image_context(object_storage_api: ObjectStorageApi, image: Image) -> list[str]:
+    def process_image_context(
+        object_storage_api: ObjectStorageApi, image: Image, region_id: str | None = None
+    ) -> list[str]:
         """Processes the image context by uploading it to object storage.
         Args:
             image (Image): The Image instance.
+            region_id (str | None): Captured creation region. Omitted for server-default routing;
+                explicitly configure the SDK target for custom-region context uploads.
         Returns:
             list[str]: List of context hashes stored in object storage.
         """
         if not image._context_list:
             return []
 
-        push_access_creds = object_storage_api.get_push_access()
-
-        object_storage = ObjectStorage(
-            push_access_creds.storage_url,
-            push_access_creds.access_key,
-            push_access_creds.secret,
-            push_access_creds.session_token,
-            push_access_creds.bucket,
-            region=push_access_creds.region,
-        )
+        if region_id is not None and not region_id.strip():
+            raise DaytonaValidationError("Build-context target region must not be blank")
+        try:
+            push_access_creds = object_storage_api.get_push_access(region_id=region_id)
+        except Exception:
+            raise DaytonaError("Failed to obtain build-context upload access") from None
+        if not push_access_creds.bucket or not push_access_creds.bucket.strip():
+            raise DaytonaValidationError("Build-context upload access must specify a bucket")
+        try:
+            object_storage = ObjectStorage(
+                push_access_creds.storage_url,
+                push_access_creds.access_key,
+                push_access_creds.secret,
+                push_access_creds.session_token,
+                push_access_creds.bucket,
+                region=push_access_creds.region,
+            )
+        except Exception:
+            raise DaytonaError("Failed to initialize build-context storage") from None
         context_hashes: list[str] = []
         for context in image._context_list:
             context_hash = object_storage.upload(

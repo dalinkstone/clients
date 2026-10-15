@@ -8770,6 +8770,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "regionId",
+            "required": false,
+            "in": "query",
+            "description": "Region the build context will be used in. When that region has its own build-context bucket, the returned credentials target it; otherwise they target the Daytona-hosted bucket.",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {

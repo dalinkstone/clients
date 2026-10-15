@@ -680,7 +680,7 @@ class AsyncDaytona:
                 )
             else:
                 context_hashes = await AsyncSnapshotService.process_image_context(
-                    self._object_storage_api, params.image
+                    self._object_storage_api, params.image, sandbox_data.target
                 )
                 sandbox_data.build_info = CreateBuildInfo(
                     context_hashes=context_hashes,

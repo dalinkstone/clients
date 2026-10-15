@@ -32,10 +32,11 @@ export const ObjectStorageApiAxiosParamCreator = function (configuration?: Confi
          * 
          * @summary Get temporary storage access for pushing objects
          * @param {string} [xDaytonaOrganizationID] Use with JWT to specify the organization ID
+         * @param {string} [regionId] Region the build context will be used in. When that region has its own build-context bucket, the returned credentials target it; otherwise they target the Daytona-hosted bucket.
          * @param {*} [options] Override http request option.
          * @throws {RequiredError}
          */
-        getPushAccess: async (xDaytonaOrganizationID?: string, options: RawAxiosRequestConfig = {}): Promise<RequestArgs> => {
+        getPushAccess: async (xDaytonaOrganizationID?: string, regionId?: string, options: RawAxiosRequestConfig = {}): Promise<RequestArgs> => {
             const localVarPath = `/object-storage/push-access`;
             // use dummy base URL string because the URL constructor only accepts absolute URLs.
             const localVarUrlObj = new URL(localVarPath, DUMMY_BASE_URL);
@@ -53,6 +54,10 @@ export const ObjectStorageApiAxiosParamCreator = function (configuration?: Confi
             await setBearerAuthToObject(localVarHeaderParameter, configuration)
 
             // authentication oauth2 required
+
+            if (regionId !== undefined) {
+                localVarQueryParameter['regionId'] = regionId;
+            }
 
             localVarHeaderParameter['Accept'] = 'application/json';
 
@@ -81,11 +86,12 @@ export const ObjectStorageApiFp = function(configuration?: Configuration) {
          * 
          * @summary Get temporary storage access for pushing objects
          * @param {string} [xDaytonaOrganizationID] Use with JWT to specify the organization ID
+         * @param {string} [regionId] Region the build context will be used in. When that region has its own build-context bucket, the returned credentials target it; otherwise they target the Daytona-hosted bucket.
          * @param {*} [options] Override http request option.
          * @throws {RequiredError}
          */
-        async getPushAccess(xDaytonaOrganizationID?: string, options?: RawAxiosRequestConfig): Promise<(axios?: AxiosInstance, basePath?: string) => AxiosPromise<StorageAccessDto>> {
-            const localVarAxiosArgs = await localVarAxiosParamCreator.getPushAccess(xDaytonaOrganizationID, options);
+        async getPushAccess(xDaytonaOrganizationID?: string, regionId?: string, options?: RawAxiosRequestConfig): Promise<(axios?: AxiosInstance, basePath?: string) => AxiosPromise<StorageAccessDto>> {
+            const localVarAxiosArgs = await localVarAxiosParamCreator.getPushAccess(xDaytonaOrganizationID, regionId, options);
             const localVarOperationServerIndex = configuration?.serverIndex ?? 0;
             const localVarOperationServerBasePath = operationServerMap['ObjectStorageApi.getPushAccess']?.[localVarOperationServerIndex]?.url;
             return (axios, basePath) => createRequestFunction(localVarAxiosArgs, globalAxios, BASE_PATH, configuration)(axios, localVarOperationServerBasePath || basePath);
@@ -103,11 +109,12 @@ export const ObjectStorageApiFactory = function (configuration?: Configuration, 
          * 
          * @summary Get temporary storage access for pushing objects
          * @param {string} [xDaytonaOrganizationID] Use with JWT to specify the organization ID
+         * @param {string} [regionId] Region the build context will be used in. When that region has its own build-context bucket, the returned credentials target it; otherwise they target the Daytona-hosted bucket.
          * @param {*} [options] Override http request option.
          * @throws {RequiredError}
          */
-        getPushAccess(xDaytonaOrganizationID?: string, options?: RawAxiosRequestConfig): AxiosPromise<StorageAccessDto> {
-            return localVarFp.getPushAccess(xDaytonaOrganizationID, options).then((request) => request(axios, basePath));
+        getPushAccess(xDaytonaOrganizationID?: string, regionId?: string, options?: RawAxiosRequestConfig): AxiosPromise<StorageAccessDto> {
+            return localVarFp.getPushAccess(xDaytonaOrganizationID, regionId, options).then((request) => request(axios, basePath));
         },
     };
 };
@@ -120,11 +127,12 @@ export class ObjectStorageApi extends BaseAPI {
      * 
      * @summary Get temporary storage access for pushing objects
      * @param {string} [xDaytonaOrganizationID] Use with JWT to specify the organization ID
+     * @param {string} [regionId] Region the build context will be used in. When that region has its own build-context bucket, the returned credentials target it; otherwise they target the Daytona-hosted bucket.
      * @param {*} [options] Override http request option.
      * @throws {RequiredError}
      */
-    public getPushAccess(xDaytonaOrganizationID?: string, options?: RawAxiosRequestConfig) {
-        return ObjectStorageApiFp(this.configuration).getPushAccess(xDaytonaOrganizationID, options).then((request) => request(this.axios, this.basePath));
+    public getPushAccess(xDaytonaOrganizationID?: string, regionId?: string, options?: RawAxiosRequestConfig) {
+        return ObjectStorageApiFp(this.configuration).getPushAccess(xDaytonaOrganizationID, regionId, options).then((request) => request(this.axios, this.basePath));
     }
 }
 

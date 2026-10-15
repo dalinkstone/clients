@@ -59,7 +59,7 @@ export interface PaginatedSnapshots extends Omit<PaginatedSnapshotsDto, 'items'>
  * If an Image instance is provided, it will be used to create a new image in Daytona.
  * @property {Resources} resources - Resources of the snapshot.
  * @property {string[]} entrypoint - Entrypoint of the snapshot.
- * @property {string} regionId - ID of the region where the snapshot will be available. Defaults to organization default region if not specified.
+ * @property {string} regionId - ID of the region where the snapshot will be available. Defaults to the client target, then the organization default. Set explicitly for custom-default-region context uploads.
  * @property {SandboxClass} sandboxClass - Target sandbox class. Determines which runners can host sandboxes created from this snapshot.
  */
 export type CreateSnapshotParams = {
@@ -71,7 +71,7 @@ export type CreateSnapshotParams = {
   sandboxClass?: SandboxClass
 }
 
-/** Supplies upload access for the selected Daytona region instead of hosted push-access. */
+/** Advanced override for region-aware API push-access. Failures never retry with API-issued access. */
 export type BuildContextUploadAccessProvider = (regionId: string) => Promise<StorageAccessDto>
 
 export interface ListSnapshotsQuery {
@@ -215,14 +215,12 @@ export class SnapshotService {
       createSnapshotReq.imageName = params.image
       createSnapshotReq.entrypoint = params.entrypoint
     } else {
-      const contextHashes = this.getBuildContextUploadAccess
-        ? await SnapshotService.processImageContext(
-            this.objectStorageApi,
-            params.image,
-            this.getBuildContextUploadAccess,
-            regionId,
-          )
-        : await SnapshotService.processImageContext(this.objectStorageApi, params.image)
+      const contextHashes = await SnapshotService.processImageContext(
+        this.objectStorageApi,
+        params.image,
+        this.getBuildContextUploadAccess,
+        regionId,
+      )
       createSnapshotReq.buildInfo = {
         contextHashes,
         dockerfileContent: params.entrypoint
@@ -380,27 +378,41 @@ export class SnapshotService {
       return []
     }
 
+    if (regionId !== undefined && !regionId.trim()) {
+      throw new DaytonaInvalidArgumentError('Build-context target region must not be blank')
+    }
     if (getBuildContextUploadAccess && !regionId) {
       throw new DaytonaInvalidArgumentError(
         'An explicit target region is required for custom build-context upload access',
       )
     }
     const ObjectStorageModule = await dynamicImport('ObjectStorage', '"processImageContext" is not supported: ')
-    const pushAccessCreds =
-      getBuildContextUploadAccess && regionId
-        ? await getBuildContextUploadAccess(regionId)
-        : (await objectStorageApi.getPushAccess()).data
-    if (getBuildContextUploadAccess && !pushAccessCreds.bucket?.trim()) {
-      throw new DaytonaInvalidArgumentError('Custom build-context upload access must specify a bucket')
+    let pushAccessCreds: StorageAccessDto
+    try {
+      pushAccessCreds =
+        getBuildContextUploadAccess && regionId
+          ? await getBuildContextUploadAccess(regionId)
+          : (await objectStorageApi.getPushAccess(undefined, regionId)).data
+    } catch {
+      // Access errors can embed credentials; discard them before instrumentation records the exception.
+      throw new DaytonaError('Failed to obtain build-context upload access')
     }
-    const objectStorage = new ObjectStorageModule.ObjectStorage({
-      endpointUrl: pushAccessCreds.storageUrl,
-      accessKeyId: pushAccessCreds.accessKey,
-      secretAccessKey: pushAccessCreds.secret,
-      sessionToken: pushAccessCreds.sessionToken,
-      bucketName: pushAccessCreds.bucket,
-      region: pushAccessCreds.region,
-    })
+    if (!pushAccessCreds.bucket?.trim()) {
+      throw new DaytonaInvalidArgumentError('Build-context upload access must specify a bucket')
+    }
+    let objectStorage: InstanceType<typeof ObjectStorageModule.ObjectStorage>
+    try {
+      objectStorage = new ObjectStorageModule.ObjectStorage({
+        endpointUrl: pushAccessCreds.storageUrl,
+        accessKeyId: pushAccessCreds.accessKey,
+        secretAccessKey: pushAccessCreds.secret,
+        sessionToken: pushAccessCreds.sessionToken,
+        bucketName: pushAccessCreds.bucket,
+        region: pushAccessCreds.region,
+      })
+    } catch {
+      throw new DaytonaError('Failed to initialize build-context storage')
+    }
 
     const contextHashes = []
     for (const context of image.contextList) {

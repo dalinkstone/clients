@@ -85,7 +85,8 @@ class CreateSnapshotParams(BaseModel):
         resources (Resources | None): Resources of the snapshot.
         entrypoint (list[str] | None): Entrypoint of the snapshot.
         region_id (str | None): ID of the region where the snapshot will be available.
-            Defaults to organization default region if not specified.
+            Defaults to the client target, then the organization default. Explicitly configure
+            the target or this field for custom-default-region context uploads.
         sandbox_class (SandboxClass | None): Target sandbox class. Determines which runners
             can host sandboxes created from this snapshot.
     """

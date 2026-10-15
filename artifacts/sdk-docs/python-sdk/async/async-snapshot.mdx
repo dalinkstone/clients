@@ -176,7 +176,8 @@ Activate a snapshot.
 @staticmethod
 @with_instrumentation()
 async def process_image_context(object_storage_api: ObjectStorageApi,
-                                image: Image) -> list[str]
+                                image: Image,
+                                region_id: str | None = None) -> list[str]
 ```
 
 Processes the image context by uploading it to object storage.
@@ -184,6 +185,8 @@ Processes the image context by uploading it to object storage.
 **Arguments**:
 
 - `image` _Image_ - The Image instance.
+- `region_id` _str | None_ - Captured creation region. Omitted for server-default routing;
+  explicitly configure the SDK target for custom-region context uploads.
 
 **Returns**:
 
@@ -221,7 +224,8 @@ Parameters for creating a new snapshot.
 - `resources` _Resources | None_ - Resources of the snapshot.
 - `entrypoint` _list[str] | None_ - Entrypoint of the snapshot.
 - `region_id` _str | None_ - ID of the region where the snapshot will be available.
-  Defaults to organization default region if not specified.
+  Defaults to the client target, then the organization default. Explicitly configure
+  the target or this field for custom-default-region context uploads.
 - `sandbox_class` _SandboxClass | None_ - Target sandbox class. Determines which runners
   can host sandboxes created from this snapshot.
 

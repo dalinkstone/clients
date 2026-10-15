@@ -110,7 +110,7 @@ export interface DaytonaConfig {
   serverUrl?: string
   /** Target environment for sandboxes */
   target?: string
-  /** Supply your own region-specific build-context upload access. No hosted fallback. */
+  /** Advanced override for region-aware API upload access. No API fallback on override failure. */
   getBuildContextUploadAccess?: BuildContextUploadAccessProvider
   /** Enable OpenTelemetry tracing for SDK operations. */
   otelEnabled?: boolean
@@ -697,6 +697,7 @@ export class Daytona implements AsyncDisposable {
     }
 
     try {
+      const regionId = this.target
       let buildInfo: any | undefined
       let snapshot: string | undefined
       let resources: Resources | undefined
@@ -711,14 +712,12 @@ export class Daytona implements AsyncDisposable {
             dockerfileContent: Image.base(params.image).dockerfile,
           }
         } else if (params.image instanceof Image) {
-          const contextHashes = this.getBuildContextUploadAccess
-            ? await SnapshotService.processImageContext(
-                this.objectStorageApi,
-                params.image,
-                this.getBuildContextUploadAccess,
-                this.target,
-              )
-            : await SnapshotService.processImageContext(this.objectStorageApi, params.image)
+          const contextHashes = await SnapshotService.processImageContext(
+            this.objectStorageApi,
+            params.image,
+            this.getBuildContextUploadAccess,
+            regionId,
+          )
           buildInfo = {
             contextHashes,
             dockerfileContent: params.image.dockerfile,
@@ -739,7 +738,7 @@ export class Daytona implements AsyncDisposable {
           env: params.envVars || {},
           labels: labels,
           public: params.public,
-          target: this.target,
+          target: regionId,
           cpu: resources?.cpu,
           gpu: resources?.gpu,
           gpuType:

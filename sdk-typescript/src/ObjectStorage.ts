@@ -7,7 +7,7 @@ import { ListObjectsV2Command, S3Client } from '@aws-sdk/client-s3'
 import { Upload } from '@aws-sdk/lib-storage'
 import * as crypto from 'crypto'
 import * as pathe from 'pathe'
-import { DaytonaNotFoundError } from './errors/DaytonaError'
+import { DaytonaError, DaytonaNotFoundError } from './errors/DaytonaError'
 import { dynamicImport } from './utils/Import'
 import { WithInstrumentation } from './utils/otel.decorator'
 
@@ -79,13 +79,18 @@ export class ObjectStorage {
     const prefix = `${organizationId}/${pathHash}/`
     const s3Key = `${prefix}context.tar`
 
-    // Check if it already exists in S3
-    if (await this.folderExistsInS3(prefix)) {
-      return pathHash
+    try {
+      if (await this.folderExistsInS3(prefix)) {
+        return pathHash
+      }
+      await this.uploadAsTar(s3Key, path, archiveBasePath)
+    } catch (error) {
+      if (error instanceof Error && 'path' in error && 'syscall' in error) {
+        throw error
+      }
+      // Sanitize inside the decorated upload boundary, not after it records the raw storage error.
+      throw new DaytonaError('Failed to upload build context to object storage')
     }
-
-    // Upload to S3
-    await this.uploadAsTar(s3Key, path, archiveBasePath)
 
     return pathHash
   }

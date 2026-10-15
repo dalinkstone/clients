@@ -292,7 +292,9 @@ describe('SnapshotService', () => {
       getAccess,
     )
 
-    await expect(customer.create({ name: 'snapshot', image: contextImage() })).rejects.toThrow(/denied/)
+    await expect(customer.create({ name: 'snapshot', image: contextImage() })).rejects.toThrow(
+      failure === 'access' ? 'Failed to obtain build-context upload access' : 'Upload denied',
+    )
 
     expect(objectStorageApi.getPushAccess).not.toHaveBeenCalled()
     expect(snapshotsApi.createSnapshot).not.toHaveBeenCalled()

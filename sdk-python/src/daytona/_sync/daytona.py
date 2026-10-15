@@ -548,7 +548,9 @@ class Daytona:
                     dockerfile_content=Image.base(params.image).dockerfile(),
                 )
             else:
-                context_hashes = SnapshotService.process_image_context(self._object_storage_api, params.image)
+                context_hashes = SnapshotService.process_image_context(
+                    self._object_storage_api, params.image, sandbox_data.target
+                )
                 sandbox_data.build_info = CreateBuildInfo(
                     context_hashes=context_hashes,
                     dockerfile_content=params.image.dockerfile(),
